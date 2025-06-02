@@ -68,7 +68,7 @@ void error_beep() {
 }
 
 
-static void set_leds(ChannelStateEnum state, unsigned char *red_p, unsigned char *yellow_p, unsigned char *green_p)
+static void set_leds(int port_num, ChannelStateEnum state, unsigned char *red_p, unsigned char *yellow_p, unsigned char *green_p)
 {
 	switch (state)
 	{
@@ -87,7 +87,7 @@ static void set_leds(ChannelStateEnum state, unsigned char *red_p, unsigned char
 		case FORMATING:
 		case COPYING:
 		case UNMOUNTING:		
-			*yellow_p = (milliseconds % 200) < 100 ? 0 : 1;
+			*yellow_p = ((milliseconds - (port_num*50)) % 500) < 250 ? 0 : 1;
 			break;
 			
 		case SUCCESS:
@@ -264,13 +264,13 @@ void* gpio_thread_function(void* arg) {
 			int base = i * PORTS_PER_CHANNEL;
 			int offset = i * 24;
 			
-			set_leds(shared_data_p->channel_info[base].state, &bits[offset+1], &bits[offset+2], &bits[offset+3]);
-			set_leds(shared_data_p->channel_info[base+1].state, &bits[offset+4], &bits[offset+5], &bits[offset+6]);
-			set_leds(shared_data_p->channel_info[base+2].state, &bits[offset+7], &bits[offset+9], &bits[offset+10]);
-			set_leds(shared_data_p->channel_info[base+3].state, &bits[offset+11], &bits[offset+12], &bits[offset+13]);
-			set_leds(shared_data_p->channel_info[base+4].state, &bits[offset+14], &bits[offset+15], &bits[offset+17]);
-			set_leds(shared_data_p->channel_info[base+5].state, &bits[offset+18], &bits[offset+19], &bits[offset+20]);
-			set_leds(shared_data_p->channel_info[base+6].state, &bits[offset+21], &bits[offset+22], &bits[offset+23]);
+			set_leds(0, shared_data_p->channel_info[base].state, &bits[offset+1], &bits[offset+2], &bits[offset+3]);
+			set_leds(1, shared_data_p->channel_info[base+1].state, &bits[offset+4], &bits[offset+5], &bits[offset+6]);
+			set_leds(2, shared_data_p->channel_info[base+2].state, &bits[offset+7], &bits[offset+9], &bits[offset+10]);
+			set_leds(3,shared_data_p->channel_info[base+3].state, &bits[offset+11], &bits[offset+12], &bits[offset+13]);
+			set_leds(4,shared_data_p->channel_info[base+4].state, &bits[offset+14], &bits[offset+15], &bits[offset+17]);
+			set_leds(5,shared_data_p->channel_info[base+5].state, &bits[offset+18], &bits[offset+19], &bits[offset+20]);
+			set_leds(6,shared_data_p->channel_info[base+6].state, &bits[offset+21], &bits[offset+22], &bits[offset+23]);
 		}
 
 		send_led_data(bits, sizeof(bits));
