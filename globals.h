@@ -26,16 +26,28 @@
 #include <errno.h>
 #include <dirent.h>
 #include <gpiod.h>
+#include <execinfo.h>
 
 
 #define VERSION_STRING "v0.0.3  2025-05-31"
 
 #define SHM_NAME "/usb_copier_shm"
+>>>>>>> dc06679 (First working version)
 #define RAMDIR_PATH "/var/ramdrive"
 #define MOUNT_POINT "/mnt/usb"
 #define SETTINGS_FILE "server.config"
 
 
+<<<<<<< HEAD
+#define MAX_FILES 256      // Maximum number of files/directories per directory
+#define COPY_BUFFER_SIZE 65536  // Buffer size for file copying
+#define STRING_LEN 128        // general name string length
+#define PATH_LEN 256       // Maximum path length
+
+#define NUMBER_OF_CHANNELS 2
+#define PORTS_PER_CHANNEL 7
+#define MAX_USB_CHANNELS (NUMBER_OF_CHANNELS * PORTS_PER_CHANNEL)  
+=======
 #define MAX_FILES 1024      // Maximum number of files/directories per directory
 #define COPY_BUFFER_SIZE 65536  // Buffer size for file copying
 #define STRING_LEN 256        // general name string length
@@ -57,6 +69,7 @@
 
 #define I2C_DEVICE "/dev/i2c-1" // I2C bus 1 on Raspberry Pi
 #define I2C_ADDR 0x27          // Default I2C address (adjust to 0x3F if needed)
+>>>>>>> dc06679 (First working version)
 
 
 
@@ -64,6 +77,20 @@
 // shared data structs
 //---------------------
 typedef enum {
+<<<<<<< HEAD
+		UNUSED,
+		READY,
+		STARTING,
+		STARTED,
+		ERASING,
+		FORMATING,
+		PARTITIONING,
+		MOUNTING,
+		COPYING,
+		UNMOUNTING,
+		SUCCESS,
+		FAILED
+=======
 		UNUSED = 0,
 		EMPTY = 1,
 		READY = 2,
@@ -79,10 +106,30 @@ typedef enum {
 		LED_TEST = 12,
 		INDICATING = 13,  // sequence red/yellow/green to show which slot to use to read master & map usb
 		NOT_IN_USE = 14   // failed or was skipped by user pressing red button in usb test
+>>>>>>> dc06679 (First working version)
 } ChannelStateEnum ;
 
 
 typedef enum {
+<<<<<<< HEAD
+    BUTTON_NOT_PRESSED,
+    BUTTON_SHORT_PRESS,
+    BUTTON_LONG_PRESS
+} ButtonStateEnum;
+
+
+typedef enum {
+	LED_OFF,
+	LED_ON,
+	LED_FLASH
+} LedStateEnum;
+
+
+typedef struct {
+	int device_id;
+	int channel_number;
+	int port_number;
+=======
     BUTTON_NOT_PRESSED = 0,
     BUTTON_SHORT_PRESS = 1,
     BUTTON_LONG_PRESS = 2,
