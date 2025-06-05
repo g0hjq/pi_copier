@@ -180,15 +180,15 @@ void test_leds() {
 
 	printf("LED Test - All Red\n");
 	set_all_states(FAILED);
-	usleep(200000);
+	usleep(150000);
 
 	printf("LED Test - All Yellow\n");
 	set_all_states(READY);
-	usleep(200000);
+	usleep(150000);
 
 	printf("LED Test - All Green\n");
 	set_all_states(SUCCESS);
-	usleep(200000);
+	usleep(150000);
 
 	printf("LED Test - Left to Right\n");
 	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++) {		
@@ -199,7 +199,7 @@ void test_leds() {
 
 	printf("LED Test - All Off\n");
 	set_all_states(EMPTY);
-	done_beep();
+	double_beep();
 }
 
 
@@ -523,7 +523,7 @@ int main() {
 		
 		ButtonStateEnum button_state0 = get_button_state0();
 		ButtonStateEnum button_state1 = get_button_state1();
-		
+
 		if (starting && ((button_state0 != BUTTON_NOT_PRESSED) || (button_state0 != BUTTON_NOT_PRESSED)))
 		{
 			lcd_clear();

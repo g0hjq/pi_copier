@@ -5,7 +5,7 @@
 #define CONSUMER "usb_copier"
 
 #define GPIO_DELAY 1
-
+#define LONG_PRESS_TIME 1200
 
 
 void gpio_init(SharedDataStruct* shared_data_p); 
@@ -19,10 +19,7 @@ void tone(int frequency, int milliseconds);
 void beep();
 void long_beep();
 void double_beep();
-void done_beep();
 void error_beep();
-
-//void gpio_test_leds();
 
 #endif // GPIO_H
 

@@ -168,7 +168,7 @@ void lcd_display_message(const char *line0, const char *line1, const char *line2
 		if (lines[i]) { // Check for NULL and empty
 		
             size_t len = strlen(lines[i]);
-            int padding = (20 - (len > 20 ? 20 : len)) / 2;
+            int padding = (len >= 20) ? 0 : (20 - len)/2;
 			memset(buf, ' ', sizeof(buf));			
 			strncpy(buf+padding, lines[i], 20-padding);
             buf[20] = '\0';

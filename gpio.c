@@ -1,6 +1,7 @@
 #include "globals.h"
 #include "utilities.h"
 #include "gpio.h"
+#include "lcd.h"
 
 extern SharedDataStruct* shared_data_p;
 
@@ -39,31 +40,25 @@ void tone(int frequency, int milliseconds)
 
 
 void beep() {
-	tone(2000, 200);
+	tone(1000, 200);
 }
 
 void long_beep() {
-	tone(2000, 1000);
+	tone(1000, 1000);
 }
 
 void double_beep() {
-	tone(2000, 100);
-	usleep(100000);
-	tone(2000, 100);
+	tone(1000, 80);
+	usleep(80000);
+	tone(1000, 80);
 }
 
-void done_beep() {
-	for (int i=0; i<6; i++){
-		tone(3000, 70);
-		usleep(70);
-	}
-}
 
 void error_beep() {
 	for (int i=0; i<10; i++)
 	{
-		tone(1900, 50);
-		tone(1700, 50);
+		tone(800, 40);
+		tone(900, 40);
 	}
 }
 
@@ -156,9 +151,7 @@ static void send_led_data(unsigned char* bits, int bit_count)
 
 // Reads the button and updates the LEDs according to the contents of shared_data every 100 milliseconds
 void* gpio_thread_function(void* arg) {
-	
-	#define LONG_PRESS_TIME 1500
-	
+		
 	static uint64_t press_start_time0 = 0;
 	static uint64_t press_start_time1 = 0;
 	static bool is_pressed0 = false;
@@ -223,28 +216,47 @@ void* gpio_thread_function(void* arg) {
 
         long press_duration1 = milliseconds - press_start_time1;
 
-        if (value1 == 0 && prev_value1 == 1) { // Button pressed (falling edge)
+        if (value1 == 0 && prev_value1 == 1) { 
+			// Button pressed (falling edge)
 			wait_for_release1 = false;
             press_start_time1 = milliseconds;
             is_pressed1 = true;
 			
-        } else if (value1 == 1 && prev_value1 == 0 && is_pressed1) { // Button released (rising edge)
+        } else if (value1 == 1 && prev_value1 == 0 && is_pressed1) { 
+			// Button released (rising edge)
 			if (!wait_for_release1){
 				button_state1 = BUTTON_SHORT_PRESS;
 			}
             is_pressed1 = false;
         }
-		else if (press_duration1 >= LONG_PRESS_TIME && value1 == 0 && !wait_for_release1) { // button held down
+		else if (press_duration1 >= LONG_PRESS_TIME && value1 == 0 && !wait_for_release1) { 
+			// button held down
             button_state1 = BUTTON_LONG_PRESS;
 			wait_for_release1 = true;
 		}
 
         prev_value1 = value1;		
 		
+		
+		
+		// Shutdown (or restart if systemd is configured for that) when both buttons are held down
+		if (((button_state0 == BUTTON_LONG_PRESS) && (button_state1 != BUTTON_NOT_PRESSED)) ||
+		    ((button_state1 == BUTTON_LONG_PRESS) && (button_state0 != BUTTON_NOT_PRESSED))) {
+				
+			// Both buttons held. Shutdown.
+			lcd_display_message(NULL, "Restarting", "See you soon!", NULL);
+			for (int device_id=0; device_id < MAX_USB_CHANNELS; device_id++) {
+				shared_data_p->channel_info[device_id].halt = true;
+			}
+			error_beep();
+			memset(bits, 0, sizeof(bits));
+			send_led_data(bits, sizeof(bits));
+			exit(0);
+		}
 
+		
 		// Update the LEDs
 		memset(bits, 0, sizeof(bits));
-
 		
 	// Map the Red, Yellow and Green LEDs for each channel to shift register bits
 	//   (Shift register bits 0, 8, 16, 24, 32 and 40 are unused)
@@ -275,7 +287,7 @@ void* gpio_thread_function(void* arg) {
 
 		send_led_data(bits, sizeof(bits));
 			
-		// Wait 0.1 Seconds to reduce CPU usage
+		// Wait 50 milliseconds to reduce CPU usage
 		usleep(50000);
 	}
 }
