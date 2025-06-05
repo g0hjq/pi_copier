@@ -29,7 +29,7 @@ void failed(char* errormessage) {
 	
     snprintf(temp_str + offset, sizeof(temp_str) - offset, "%s", errormessage);
     
-    fprintf(stderr, "%s\n", temp_str);
+    fprintf(stderr, "ERROR: %s\n", temp_str);
     
     if (client_info_p) {
         client_info_p->state = FAILED;

@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
@@ -34,7 +35,7 @@
 #define SHM_NAME "/usb_copier_shm"
 #define RAMDIR_PATH "/var/ramdrive"
 #define MOUNT_POINT "/mnt/usb"
-#define SETTINGS_FILE "server.config"
+#define USB_CONFIG_FILE "./usb_ports.config"
 
 
 #define MAX_FILES 1024      // Maximum number of files/directories per directory
@@ -64,7 +65,6 @@
 // shared data structs
 //---------------------
 typedef enum {
-		UNUSED = 0,
 		EMPTY = 1,
 		READY = 2,
 		STARTING = 3,
@@ -78,7 +78,6 @@ typedef enum {
 		FAILED = 11,
 		LED_TEST = 12,
 		INDICATING = 13,  // sequence red/yellow/green to show which slot to use to read master & map usb
-		NOT_IN_USE = 14   // failed or was skipped by user pressing red button in usb test
 } ChannelStateEnum ;
 
 

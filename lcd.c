@@ -16,7 +16,7 @@ static const unsigned char bargraph_chars[5][8] = {
 
 static void i2c_write_byte(unsigned char byte) {
     if (write(i2c_fd, &byte, 1) != 1) {
-        fprintf(stderr, "I2C write failed: %s\n", strerror(errno));
+        fprintf(stderr, "ERROR: I2C write failed: %s\n", strerror(errno));
     }
 }
 

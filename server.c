@@ -22,15 +22,13 @@ SharedDataStruct* shared_data_p = NULL;
 //------------------------------------------------------------------------------------------------
 
 // Sets the state of a single USB Channel
-void set_state(int device_id, ChannelStateEnum state)
-{
+void set_state(int device_id, ChannelStateEnum state) {
 	shared_data_p->channel_info[device_id].state = state;
 }
 
 
 // Sets the state of all USB Channels
-void set_all_states(ChannelStateEnum state)
-{
+void set_all_states(ChannelStateEnum state) {
 	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++) {
 		shared_data_p->channel_info[device_id].state = state;
 	}
@@ -48,87 +46,19 @@ void set_all_states(ChannelStateEnum state)
 //------------------------------------------------------------------------------------------------
 
 
-
-// Prompts the user to insert a usb drive in each port in turn to obtain
-// the path of each USB port so we can associate the hub's port paths with 
-// the usb port number to enable us to light the correct LEDs
-void map_usb_ports(void) {
-
-	char name[STRING_LEN];
-	char path[STRING_LEN];
-	char line4[STRING_LEN];
-	
-	// Clear any old states
-	get_button_state0();
-	get_button_state1();
-	usb_device_inserted(NULL, NULL);
-	strcpy(line4, "Press Button to skip");
-	
-	for (int device_id=0; device_id< MAX_USB_CHANNELS; device_id++)
-	{		
-		ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];
-		channel_info_p->state = INDICATING;
-			
-		sprintf(buffer, "Put disk in slot %u", device_id+1);
-		lcd_display_message("Testing USB Ports", buffer, NULL, line4);
-		
-		while(true) {
-				
-			if (usb_device_inserted(name, path)) {
-				printf("found usb device %d : name=%s path=%s\n", device_id, name, path);
-								
-				// error if the channel has already been mapped
-				if (get_device_id_from_path(shared_data_p, path) >= 0) { 
-					error_beep();
-					strcpy(line4, "ERROR: SOCKET IN USE");
-				}
-				else {
-					beep();
-					strcpy(channel_info_p->device_name, name);
-					strcpy(channel_info_p->device_path, path);
-					channel_info_p->state = SUCCESS;
-					strcpy(line4, name);
-					strcat(line4, " ");
-					strcat(line4, path);
-				}
-				break;
-			}			
-			
-			if ((get_button_state0() == BUTTON_SHORT_PRESS) || (get_button_state1() == BUTTON_SHORT_PRESS)) {
-				printf("Button Pressed - skip port\n");
-				channel_info_p->state = NOT_IN_USE;
-				break;
-			}
-
-			usleep(200000);
-		}
-	}	
-
-	lcd_clear();
-}
-
-
-
 // Starts a new client program in a seperate Linux process
 // Returns the pid of the new process or -1 if error
-int start_process(int device_id)
-{
+int start_process(int device_id) {
 		
 	printf("Start client process for device number %d \n", device_id);
 	
 	if ((device_id < 0) || (device_id > MAX_USB_CHANNELS)) {
-		fprintf(stderr, "Start_processs: device_id %d invalid\n", device_id);
+		fprintf(stderr, "ERROR: Start_processs: device_id %d invalid\n", device_id);
 		exit(1);
 	}
 	
 	ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];
-	
-	if (channel_info_p->state == UNUSED) {
-		fprintf(stderr, "Start_processs: channel %d unused\n", device_id);
-		return -1;
-	}
 		
-	
 	// Fork a new instance of the client process	
 	pid_t pid = fork();
 	if (pid < 0) {
@@ -164,7 +94,7 @@ int start_process(int device_id)
         execvp(args[0], args);
 
         // If execvp fails
-        fprintf(stderr, "Failed to execute sudo ./client %s: %s\n", buffer, strerror(errno));
+        fprintf(stderr, "ERROR: Failed to execute sudo ./client %s: %s\n", buffer, strerror(errno));
         exit(EXIT_FAILURE);
 	}
 	
@@ -206,13 +136,12 @@ void test_leds() {
 
 // Prompts the user to insert the master USB in slot one. 
 // Recursively copies all files to the ramdrive
-int load_master()
-{
+int load_master() {
 	char name[STRING_LEN];
 	char path[STRING_LEN];
 	
 	lcd_display_message(NULL, "Insert Master", "in slot 1", NULL);
-	set_all_states(UNUSED);
+	set_all_states(EMPTY);
 	set_state(0, INDICATING);
 
 	// Wait for USB inserted
@@ -232,7 +161,7 @@ int load_master()
 	const char* last_slash = strrchr(name, '/');
 	if (!last_slash)
 	{
-		fprintf(stderr, "device_name '%s' is not in expected format\n", name);
+		fprintf(stderr, "ERROR: device_name '%s' is not in expected format\n", name);
 		return 1;
 	}		
     snprintf(mount_point, sizeof(mount_point), "%s/%s1", MOUNT_POINT, last_slash+1);	
@@ -247,7 +176,7 @@ int load_master()
     // Create mount point if it doesn't exist
 	snprintf(buffer, sizeof(buffer), "sudo mkdir -p %s", mount_point);
 	if (execute_command(-1, buffer, false) != 0) {
-		fprintf(stderr, "Creating mount point\n");
+		fprintf(stderr, "ERROR: Creating mount point\n");
 		return 1;
 	}
 
@@ -255,7 +184,7 @@ int load_master()
     // Mount the USB drive
 	snprintf(buffer, sizeof(buffer), "sudo mount %s %s", partition_name, mount_point);
 	if (execute_command(-1, buffer, false) != 0) {
-		fprintf(stderr, "Mounting the USB drive\n");
+		fprintf(stderr, "ERROR: Mounting the USB drive\n");
 		return 1;
 	}
 
@@ -263,7 +192,7 @@ int load_master()
 	// Empty the ramdrive
     snprintf(buffer, sizeof(buffer), "sudo rm -rf %s/*", RAMDIR_PATH);
 	if (execute_command(-1, buffer, false) != 0) {
-		fprintf(stderr, "empty_directory failed\n");
+		fprintf(stderr, "ERROR: empty_directory failed\n");
         return 1;
 	}
 
@@ -272,7 +201,7 @@ int load_master()
 	shared_data_p->total_size = 0;
 	bool halt = false;
 	if (copy_directory(mount_point, RAMDIR_PATH, &halt, &shared_data_p->total_size) != 0) {
-		fprintf(stderr, "copy_directory failed\n");
+		fprintf(stderr, "ERROR: copy_directory failed\n");
         return 1;
 	}
 
@@ -281,7 +210,7 @@ int load_master()
     // Unmount the USB drive
 	snprintf(buffer, sizeof(buffer), "sudo umount %s", mount_point);
 	if (execute_command(-1, buffer, false) != 0) {
-		fprintf(stderr, "Ejecting the USB drive %s\n", mount_point);
+		fprintf(stderr, "ERROR: Unmounting the USB drive %s\n", mount_point);
 		return 1;
 	}
 
@@ -315,23 +244,33 @@ int load_master()
 
 
 
-int run(int hub_number)
-{
+int run(int hub_number) {
+	
+	print_shared_data(shared_data_p);
+	
 	int result = 0;
 
 	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++) {
-		
+
 		ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];	
+		
+		// Clears error lights from previous fails when the drive has been removed
+		if (!device_is_loaded(channel_info_p->device_name)) {
+			channel_info_p->state = EMPTY;
+		}
 		
 		if (channel_info_p->hub_number == hub_number) {
 			
+			printf("%d=%s %s (%s)\n", device_id,
+				get_state_name(channel_info_p->state), channel_info_p->device_name, channel_info_p->device_path);
+						
 			if ((channel_info_p->state == READY) || 
 			    (channel_info_p->state == SUCCESS) || 
 				(channel_info_p->state == FAILED) ) {
 					
 				int pid = start_process(device_id);					
 				if (pid < 0) {
-					fprintf(stderr, "start_process failed\n");
+					fprintf(stderr, "ERROR: start_process failed\n");
 					result = 1;
 				}
 				usleep(500000);	
@@ -444,7 +383,7 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 			gettimeofday(&start_time[hub_number], NULL);
 			channel_busy[hub_number] = true;
 			lcd_write_string("", hub_number*2);
-			lcd_write_string("", hub_number*2+1);
+			lcd_write_string("", hub_number*2+1);		
 			beep();
 			run(hub_number);
 		}
@@ -498,7 +437,7 @@ int main() {
 		channel_info_p->device_id = device_id;
 		channel_info_p->hub_number = device_id / PORTS_PER_CHANNEL;
 		channel_info_p->port_number = device_id % PORTS_PER_CHANNEL;
-		channel_info_p->state = UNUSED;
+		channel_info_p->state = EMPTY;
 	}
 	
 	// Initialise the LCD etc
@@ -511,11 +450,11 @@ int main() {
 	
 	load_master();
 	
-	map_usb_ports();
+	//map_usb_ports();
 	
 	
 	// Main program loop
-	lcd_display_message("Ready to copy", NULL, "Press Red button", "to begin");
+	lcd_display_message("Ready to copy", "Insert disks then", "press Red button", "to begin");
 	double_beep();
 	bool starting = true;
 	

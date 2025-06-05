@@ -10,7 +10,6 @@
 const char* get_state_name(const ChannelStateEnum state)
 {
 	switch (state) {
-		case UNUSED: 		return "UNUSED";
 		case EMPTY: 		return "EMPTY";
 		case READY: 		return "READY";
 		case STARTING: 		return "STARTING";
@@ -24,7 +23,6 @@ const char* get_state_name(const ChannelStateEnum state)
 		case FAILED: 		return "FAILED";
 		case LED_TEST: 		return "LED_TEST";
 		case INDICATING:	return "INDICATING";
-		case NOT_IN_USE:	return "NOT IN USE";
 	}
 	
 	return "UNKNOWN" ;
@@ -35,7 +33,7 @@ const char* get_state_name(const ChannelStateEnum state)
 /**
  * Display the contents of the client_info struct for debugging purposes
  */
-void print_client_info(ChannelInfoStruct* client_info_p) {
+void print_client_info(const ChannelInfoStruct* client_info_p) {
 	printf("  DEVICE_ID     %u\n", client_info_p->device_id);
 	printf("  CHANNEL NUM   %u\n", client_info_p->hub_number);
 	printf("  PORT NUM      %u\n", client_info_p->port_number);
@@ -53,7 +51,7 @@ void print_client_info(ChannelInfoStruct* client_info_p) {
 /**
  * Displays the contents of the entire shared memory area
  */
-void print_shared_data(SharedDataStruct* shared_data_p) {
+void print_shared_data(const SharedDataStruct* shared_data_p) {
 	printf("\n\n\nSHARED DATA\n==========================\n");
 	printf("ShareDataStruct size = %lu\n", sizeof(SharedDataStruct));
 	printf(" settings.autostart = %d\n", shared_data_p->settings.autostart); 
@@ -73,6 +71,43 @@ void print_shared_data(SharedDataStruct* shared_data_p) {
 // Shared Helper functions
 //------------------------------
 
+
+int get_device_id_from_hub_and_port_number(const SharedDataStruct* shared_data_p, int hub_number, int port_number) {
+	
+	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++)
+	{
+		const ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];
+		if ((channel_info_p->port_number == port_number) && (channel_info_p->hub_number == hub_number)) {
+			return device_id;
+		}
+	}
+	
+    fprintf(stderr, "ERROR: get_device_id_from_hub_and_port_number failed. hub_number=%d, port_number=%d\n", 
+		hub_number, port_number);
+    exit(1);
+}
+
+
+void trim(char *str) {
+    int start = 0, end = strlen(str) - 1;
+    
+    // Remove leading whitespace
+    while (start <= end && isspace(str[start])) {
+        start++;
+    }
+    
+    // Remove trailing whitespace
+    while (end >= start && isspace(str[end])) {
+        end--;
+    }
+    
+    // Shift string to remove leading whitespace
+    if (start > 0) {
+        memmove(str, str + start, end - start + 2);
+    } else {
+        str[end + 1] = '\0'; // Null-terminate after last non-whitespace char
+    }
+}
 
 
 /**
@@ -108,21 +143,6 @@ void extract_usb_path(const char *input, char *output) {
 
 
 
-int get_device_id_from_path(const SharedDataStruct* shared_data_p, char* path)
-{
-	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++)
-	{
-		const ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];
-		if (strcmp(channel_info_p->device_path, path) == 0)
-		{
-			return device_id;
-		}		
-	}
-	
-	return -1;
-}
-
-
 
 /**
  * Function to execute shell commands and check for errors
@@ -131,7 +151,7 @@ int get_device_id_from_path(const SharedDataStruct* shared_data_p, char* path)
 int execute_command(const int device_id, const char *cmd, const bool ignore_errors) {
 	
     if (!cmd || *cmd == '\0') {
-        fprintf(stderr, "Error: Invalid or empty command\n");
+        fprintf(stderr, "ERROR: Invalid or empty command\n");
         return -1;
     }
 
@@ -144,12 +164,12 @@ int execute_command(const int device_id, const char *cmd, const bool ignore_erro
 	
     int ret = system(cmd);
     if (ret == -1) {
-        fprintf(stderr, "Error: Failed to execute '%s': %s\n", cmd, strerror(errno));
+        fprintf(stderr, "ERROR: Failed to execute '%s': %s\n", cmd, strerror(errno));
         return -1;
     }
 
     if (!ignore_errors && WIFEXITED(ret) && WEXITSTATUS(ret) != 0) {
-        fprintf(stderr, "Error: Command '%s' failed with exit code %d\n", cmd, WEXITSTATUS(ret));
+        fprintf(stderr, "ERROR: Command '%s' failed with exit code %d\n", cmd, WEXITSTATUS(ret));
         return -1;
     }
     return 0;
@@ -184,21 +204,21 @@ int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *
     // Get source file size
     if (stat(src_path, &stat_buf) < 0) {		
         snprintf(error_msg, sizeof(error_msg), "Failed to stat source file '%s'", src_path);
-   		fprintf(stderr, "%s\n", error_msg);
+   		fprintf(stderr, "ERROR: %s\n", error_msg);
 		return -1;
     }
 	
     int src_fd = open(src_path, O_RDONLY);
     if (src_fd < 0) {
         snprintf(error_msg, sizeof(error_msg), "Failed to open source file '%s'", src_path);
-   		fprintf(stderr, "%s\n", error_msg);
+   		fprintf(stderr, "ERROR: %s\n", error_msg);
 		return -1;
     }
 
     int dest_fd = open(dest_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (dest_fd < 0) {
         snprintf(error_msg, sizeof(error_msg), "Failed to open destination file '%s'", dest_path);
-   		fprintf(stderr, "%s\n", error_msg);
+   		fprintf(stderr, "ERROR: %s\n", error_msg);
         close(src_fd);
 		return -1;
     }
@@ -212,7 +232,7 @@ int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *
 		
         if (write(dest_fd, buffer, bytes_read) != bytes_read) {
             snprintf(error_msg, sizeof(error_msg), "Failed to write to '%s'", dest_path);
-			fprintf(stderr, "%s\n", error_msg);
+			fprintf(stderr, "ERROR: %s\n", error_msg);
             close(src_fd);
             close(dest_fd);
 			return -1;
@@ -223,7 +243,7 @@ int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *
 
     if (bytes_read < 0) {
         snprintf(error_msg, sizeof(error_msg), "Failed to read from '%s'", src_path);
-   		fprintf(stderr, "%s\n", error_msg);
+   		fprintf(stderr, "ERROR: %s\n", error_msg);
         close(src_fd);
         close(dest_fd);
 		return -1;
@@ -231,7 +251,7 @@ int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *
 
     if (fsync(dest_fd) == -1) {
         snprintf(error_msg, sizeof(error_msg), "Failed to fsync '%s'", dest_path);
-   		fprintf(stderr, "%s\n", error_msg);
+   		fprintf(stderr, "ERROR: %s\n", error_msg);
         close(src_fd);
         close(dest_fd);
 		return -1;
@@ -268,19 +288,19 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
     DIR *dir = opendir(src_dir);
     if (!dir) {
         snprintf(error_msg, sizeof(error_msg), "Failed to open source directory '%s'", src_dir);
-   		fprintf(stderr, "%s\n", error_msg);
+   		fprintf(stderr, "ERROR: %s\n", error_msg);
 		return -1;
     }
 
     if (mkdir(dest_dir, 0755) < 0 && errno != EEXIST) {
         snprintf(error_msg, sizeof(error_msg), "Failed to create destination directory '%s'", dest_dir);
-   		fprintf(stderr, "%s\n", error_msg);
+   		fprintf(stderr, "ERROR: %s\n", error_msg);
         closedir(dir);
 		return -1;
     }
 
     if (!halt_p) {
-   		fprintf(stderr, "copy_directory: halt is NULL\n");
+   		fprintf(stderr, "ERROR: copy_directory: halt is NULL\n");
 		return -1;
     }
 	
@@ -298,14 +318,14 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 
         if (count >= MAX_FILES) {
             snprintf(error_msg, sizeof(error_msg), "Too many files in directory '%s' (max: %d)", src_dir, MAX_FILES);
-			fprintf(stderr, "%s\n", error_msg);
+			fprintf(stderr, "ERROR: %s\n", error_msg);
             closedir(dir);
 			return -1;
         }
 
         if (strlen(entry->d_name) >= PATH_LEN) {
             snprintf(error_msg, sizeof(error_msg), "File name too long: '%s' (max: %d characters)", entry->d_name, PATH_LEN - 1);
-			fprintf(stderr, "%s\n", error_msg);
+			fprintf(stderr, "ERROR: %s\n", error_msg);
             closedir(dir);
 			return -1;
         }
@@ -333,11 +353,11 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
     for (int i = 0; i < count; i++) {
 		
 		if (strlen(src_dir) + strlen(names[i]) + 2 >= PATH_LEN) {
-			fprintf(stderr, "src_dir and names[i] is too long\n");			
+			fprintf(stderr, "ERROR: src_dir and names[i] is too long\n");			
 		}
 			
 		if (strlen(dest_path) + strlen(names[i]) + 2 >= PATH_LEN) {
-			fprintf(stderr, "dest_path and names[i] is too long\n");			
+			fprintf(stderr, "ERROR: dest_path and names[i] is too long\n");			
 		}
 			
 		snprintf(src_path, PATH_LEN, "%s/%s", src_dir, names[i]);
@@ -345,7 +365,7 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 	
         if (stat(src_path, &stat_buf) < 0) {
             snprintf(error_msg, sizeof(error_msg), "Failed to stat '%s'", src_path);
-			fprintf(stderr, "%s\n", error_msg);
+			fprintf(stderr, "ERROR: %s\n", error_msg);
 			return -1;
         }
 
@@ -354,7 +374,7 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
         if (S_ISREG(stat_buf.st_mode)) {
             if (copy_file(src_path, dest_path, halt_p, bytes_copied_p) < 0) {
                 snprintf(error_msg, sizeof(error_msg), "Failed to copy file: '%s' -> '%s'", src_path, dest_path);
-				fprintf(stderr, "%s\n", error_msg);
+				fprintf(stderr, "ERROR: %s\n", error_msg);
 				return -1;
             }
         }
@@ -374,7 +394,7 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 
         if (stat(src_path, &stat_buf) < 0) {
             snprintf(error_msg, sizeof(error_msg), "Failed to stat '%s'", src_path);
-			fprintf(stderr, "%s\n", error_msg);
+			fprintf(stderr, "ERROR: %s\n", error_msg);
 			return -1;
         }
 
@@ -383,7 +403,7 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
         if (S_ISDIR(stat_buf.st_mode)) {
             if (copy_directory(src_path, dest_path, halt_p, bytes_copied_p) < 0) {
                 snprintf(error_msg, sizeof(error_msg), "Failed to copy subdirectory '%s'", src_path);
-				fprintf(stderr, "%s\n", error_msg);
+				fprintf(stderr, "ERROR: %s\n", error_msg);
 				return -1;
             }
         }
