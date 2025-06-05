@@ -29,7 +29,7 @@
 #include <execinfo.h>
 
 
-#define VERSION_STRING "v0.0.3  2025-05-31"
+#define VERSION_STRING "v0.0.4  2025-06-03"
 
 #define SHM_NAME "/usb_copier_shm"
 #define RAMDIR_PATH "/var/ramdrive"
