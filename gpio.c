@@ -65,9 +65,12 @@ void error_beep() {
 
 static void set_leds(int port_num, ChannelStateEnum state, unsigned char *red_p, unsigned char *yellow_p, unsigned char *green_p)
 {
+	*red_p = 0;
+	*yellow_p = 0;
+	*green_p = 0;
+	
 	switch (state)
 	{
-		case UNUSED:
 		case EMPTY:
 			break;
 			
@@ -90,7 +93,6 @@ static void set_leds(int port_num, ChannelStateEnum state, unsigned char *red_p,
 			break;
 
 		case FAILED:
-		case NOT_IN_USE:
 			*red_p = 1;
 			break;
 			
@@ -163,7 +165,7 @@ void* gpio_thread_function(void* arg) {
 	
 	SharedDataStruct* shared_data_p = (SharedDataStruct*)arg;
 	if (!shared_data_p) {
-        fprintf(stderr, "gpio_thread_function failed to initialise\n");
+        fprintf(stderr, "ERROR: gpio_thread_function failed to initialise\n");
 		exit(1);
 	}
 
@@ -180,7 +182,7 @@ void* gpio_thread_function(void* arg) {
 		// -------------------------
         int value0 = gpiod_line_get_value(button_line0);
         if (value0 < 0) {
-            fprintf(stderr, "Failed to read button0 value\n");
+            fprintf(stderr, "ERROR: Failed to read button0 value\n");
             exit(1);
         }
 
@@ -210,7 +212,7 @@ void* gpio_thread_function(void* arg) {
 		// -------------------------
         int value1 = gpiod_line_get_value(button_line1);
         if (value1 < 0) {
-            fprintf(stderr, "Failed to read button2 value\n");
+            fprintf(stderr, "ERROR: Failed to read button2 value\n");
             exit(1);
         }
 
@@ -345,76 +347,76 @@ void gpio_init(SharedDataStruct* shared_data_p) {
     // Open the GPIO chip
     chip = gpiod_chip_open_by_name(GPIO_CHIP);
     if (!chip) {
-        fprintf(stderr, "Failed to open GPIO chip");
+        fprintf(stderr, "ERROR: Failed to open GPIO chip");
         exit(1);
     }
 
     // Get the GPIO lines
     button_line0 = gpiod_chip_get_line(chip, GPIO_BUTTON0);
     if (!button_line0) {
-        fprintf(stderr, "Failed to get button 0 GPIO line");
+        fprintf(stderr, "ERROR: Failed to get button 0 GPIO line");
 		exit(1);
     }
 
     button_line1 = gpiod_chip_get_line(chip, GPIO_BUTTON1);
     if (!button_line1) {
-        fprintf(stderr, "Failed to get button 1 GPIO line");
+        fprintf(stderr, "ERROR: Failed to get button 1 GPIO line");
 		exit(1);
     }
 
     clock_line = gpiod_chip_get_line(chip, GPIO_CLOCK);
     if (!clock_line) {
-        fprintf(stderr, "Failed to get clock GPIO line");
+        fprintf(stderr, "ERROR: Failed to get clock GPIO line");
 		exit(1);
     }
 
     data_line = gpiod_chip_get_line(chip, GPIO_DATA);
     if (!data_line) {
-        fprintf(stderr, "Failed to get data GPIO line");
+        fprintf(stderr, "ERROR: Failed to get data GPIO line");
 		exit(1);
     }
 
     latch_line = gpiod_chip_get_line(chip, GPIO_LATCH);
     if (!latch_line) {
-        fprintf(stderr, "Failed to get latch GPIO line");
+        fprintf(stderr, "ERROR: Failed to get latch GPIO line");
 		exit(1);
     }
 
     speaker_line = gpiod_chip_get_line(chip, GPIO_SPEAKER);
     if (!speaker_line) {
-        fprintf(stderr, "Failed to get speaker GPIO line");
+        fprintf(stderr, "ERROR: Failed to get speaker GPIO line");
 		exit(1);
     }
 
     // Configure both buttons as inputs. They have hardware pullups
     if (gpiod_line_request_input(button_line0, CONSUMER) < 0) {
-        fprintf(stderr, "Failed to set button line 1 as input\n");
+        fprintf(stderr, "ERROR: Failed to set button line 1 as input\n");
         exit(1);
     }
 
     if (gpiod_line_request_input(button_line1, CONSUMER) < 0) {
-        fprintf(stderr, "Failed to set button line 2 as input\n");
+        fprintf(stderr, "ERROR: Failed to set button line 2 as input\n");
         exit(1);
     }
 
     // Configure the outputs to the 74HC595 LED drivers
     if (gpiod_line_request_output(clock_line, CONSUMER, 0) < 0) {
-        fprintf(stderr, "Failed to set clock line as output");
+        fprintf(stderr, "ERROR: Failed to set clock line as output");
         exit(1);
     }
 
     if (gpiod_line_request_output(data_line, CONSUMER, 0) < 0) {
-        fprintf(stderr, "Failed to set data line as output");
+        fprintf(stderr, "ERROR: Failed to set data line as output");
         exit(1);
     }
 
     if (gpiod_line_request_output(latch_line, CONSUMER, 0) < 0) {
-        fprintf(stderr, "Failed to set latch line as output");
+        fprintf(stderr, "ERROR: Failed to set latch line as output");
         exit(1);
     }
 
     if (gpiod_line_request_output(speaker_line, CONSUMER, 0) < 0) {
-        fprintf(stderr, "Failed to set speaker line as output");
+        fprintf(stderr, "ERROR: Failed to set speaker line as output");
         exit(1);
     }
 
