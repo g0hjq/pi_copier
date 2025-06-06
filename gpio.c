@@ -235,6 +235,7 @@ void display_system_menu(void) {
 				if (value1==0) {
 					
 					if (command_num == 4) { // cancel
+						lcd_display_message(NULL, "Ready", NULL, NULL);
 						return;
 					}
 					
@@ -247,21 +248,20 @@ void display_system_menu(void) {
 						value1 = gpiod_line_get_value(button_line1);
 						
 						if (value1 == 0) {
-							lcd_display_message(NULL, "OK", NULL, NULL);
 							done = true;
 						}
 						
 						if (value0 == 0) {
-							
-							lcd_display_message(NULL,"OK","Please Wait",NULL);
-							
+														
 							switch (command_num) {
 								case 0: // AP_Mode
+									lcd_display_message(NULL,"Setting up AP Mode","Please Wait",NULL);
 									execute_command(-1, "sudo ./setup_ap.sh", true);
 									get_ip_address(ip_addr, sizeof(ip_addr));
 									lcd_display_message("AP Mode", "SSID: Copier_AP",ip_addr, "Password: LetMeIn123");									
 									break;
 								case 1: // WiFi Mode
+									lcd_display_message(NULL,"Setting up WiFi Mode","Please Wait",NULL);
 									execute_command(-1, "sudo ./disable_ap.sh", true);
 									get_ip_address(ip_addr, sizeof(ip_addr));
 									lcd_display_message("WiFi Mode", ip_addr, "Username : pi", "Password: raspberry");									
@@ -275,13 +275,13 @@ void display_system_menu(void) {
 									execute_command(-1, "sudo shutdownnow", true);					
 									break;
 								case 4: // Cancel
-									lcd_display_message(NULL, "OK", NULL, NULL);
 									done = true;
 									break;
 								}
 							
 							return;
-						}						
+						}	
+						
 						usleep(100000);
 					}
 				}
