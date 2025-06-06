@@ -192,17 +192,17 @@ void* gpio_thread_function(void* arg) {
 			wait_for_release0 = false;
             press_start_time0 = milliseconds;
             is_pressed0 = true;
-			
-        } else if (value0 == 1 && prev_value0 == 0 && is_pressed0) { // Button released (rising edge)
-			if (!wait_for_release0){
-				button_state0 = BUTTON_SHORT_PRESS;
-			}
-            is_pressed0 = false;
-        }
+		}
 		else if (press_duration0 >= LONG_PRESS_TIME && value0 == 0 && !wait_for_release0) { // button held down
             button_state0 = BUTTON_LONG_PRESS;
 			wait_for_release0 = true;
 		}
+		else if (value0 == 1 && prev_value0 == 0 && is_pressed0) { // Button released (rising edge)
+			if (!wait_for_release0 && press_duration0 >= SHORT_PRESS_TIME){
+				button_state0 = BUTTON_SHORT_PRESS;
+			}
+            is_pressed0 = false;
+        }
 
         prev_value0 = value0;		
 		
@@ -218,25 +218,22 @@ void* gpio_thread_function(void* arg) {
 
         long press_duration1 = milliseconds - press_start_time1;
 
-        if (value1 == 0 && prev_value1 == 1) { 
-			// Button pressed (falling edge)
+        if (value1 == 0 && prev_value1 == 1) { // Button pressed (falling edge)
 			wait_for_release1 = false;
             press_start_time1 = milliseconds;
-            is_pressed1 = true;
-			
-        } else if (value1 == 1 && prev_value1 == 0 && is_pressed1) { 
-			// Button released (rising edge)
-			if (!wait_for_release1){
-				button_state1 = BUTTON_SHORT_PRESS;
-			}
-            is_pressed1 = false;
+            is_pressed1 = true;			
         }
-		else if (press_duration1 >= LONG_PRESS_TIME && value1 == 0 && !wait_for_release1) { 
-			// button held down
+		else if (press_duration1 >= LONG_PRESS_TIME && value1 == 0 && !wait_for_release1) { // button held down
             button_state1 = BUTTON_LONG_PRESS;
 			wait_for_release1 = true;
 		}
-
+        else if (value1 == 1 && prev_value1 == 0 && is_pressed1) { // Button released (rising edge)
+			if (!wait_for_release1 && press_duration1 >= SHORT_PRESS_TIME){
+				button_state1 = BUTTON_SHORT_PRESS;
+			}
+            is_pressed1 = false;
+		}
+		
         prev_value1 = value1;		
 		
 		

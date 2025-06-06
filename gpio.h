@@ -5,7 +5,8 @@
 #define CONSUMER "usb_copier"
 
 #define GPIO_DELAY 1
-#define LONG_PRESS_TIME 1200
+#define SHORT_PRESS_TIME 200
+#define LONG_PRESS_TIME 1500
 
 
 void gpio_init(SharedDataStruct* shared_data_p); 
