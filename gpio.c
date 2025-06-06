@@ -2,6 +2,9 @@
 #include "utilities.h"
 #include "gpio.h"
 #include "lcd.h"
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 extern SharedDataStruct* shared_data_p;
 
@@ -149,6 +152,145 @@ static void send_led_data(unsigned char* bits, int bit_count)
 	gpiod_line_set_value(latch_line, 0);
 	delay_us(GPIO_DELAY);
 }
+		
+void wait_for_button_release() {
+	do {
+		usleep(100000);
+	} while ((gpiod_line_get_value(button_line0)==0) || (gpiod_line_get_value(button_line0)==0));
+
+	button_state0 = BUTTON_NOT_PRESSED;
+	button_state1 = BUTTON_NOT_PRESSED;
+}
+
+
+
+void get_ip_address(char* ip_addr, int addr_len) {
+	
+	struct ifaddrs *ifaddr, *ifa;
+    char ip[INET_ADDRSTRLEN];
+	ip_addr[0] = '\0';
+
+    // Get list of network interfaces
+    if (getifaddrs(&ifaddr) == -1) {
+        perror("getifaddrs");
+        return;
+    }
+
+    // Iterate through interfaces
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL)
+            continue;
+
+        // Check for IPv4 addresses
+        if (ifa->ifa_addr->sa_family == AF_INET) {
+            // Convert binary address to string
+            struct sockaddr_in *addr = (struct sockaddr_in *)ifa->ifa_addr;
+            inet_ntop(AF_INET, &addr->sin_addr, ip, INET_ADDRSTRLEN);
+
+            // Skip loopback interface
+            if (strcmp(ifa->ifa_name, "wlan0") == 0) {
+				strncpy(ip_addr, ip, addr_len);
+				ip_addr[addr_len-1] = '\0';
+				break;
+            }
+        }
+    }
+
+    // Free the interface list
+    freeifaddrs(ifaddr);
+	
+    return;
+}	
+	
+	
+		
+// Both buttons held. Display System menu
+const char *system_commands[] = {"[AP Mode]", "[WiFi Mode]", "[Restart]", "[Shutdown]", "[Cancel]"};
+const int command_count = sizeof(system_commands) / sizeof(char*);
+
+void display_system_menu(void) {
+	
+	int command_num = 0;
+	char ip_addr[STRING_LEN];
+	
+	while (true) {		
+	
+		lcd_display_message(system_commands[command_num], NULL, "TOP for next option", "BOTTOM to execute");
+
+		bool done = false;
+		while (!done) {
+			
+			int value0 = gpiod_line_get_value(button_line0);
+			int value1 = gpiod_line_get_value(button_line1);
+		
+			if (value0==0) {
+				command_num++;
+				if (command_num >= command_count) {
+					command_num = 0;
+				}
+				wait_for_button_release();
+				done = true;
+			} 
+			else {			
+				if (value1==0) {
+					
+					if (command_num == 4) { // cancel
+						return;
+					}
+					
+					lcd_display_message(system_commands[command_num], "Are you sure?", "TOP to Execute", "BOTTOM to Cancel");
+					wait_for_button_release();
+					
+					
+					while (!done) {
+						value0 = gpiod_line_get_value(button_line0);
+						value1 = gpiod_line_get_value(button_line1);
+						
+						if (value1 == 0) {
+							lcd_display_message(NULL, "OK", NULL, NULL);
+							done = true;
+						}
+						
+						if (value0 == 0) {
+							
+							lcd_display_message(NULL,"OK","Please Wait",NULL);
+							
+							switch (command_num) {
+								case 0: // AP_Mode
+									execute_command(-1, "sudo ./setup_ap.sh", true);
+									get_ip_address(ip_addr, sizeof(ip_addr));
+									lcd_display_message("AP Mode", "SSID: Copier_AP",ip_addr, "Password: LetMeIn123");									
+									break;
+								case 1: // WiFi Mode
+									execute_command(-1, "sudo ./disable_ap.sh", true);
+									get_ip_address(ip_addr, sizeof(ip_addr));
+									lcd_display_message("WiFi Mode", ip_addr, "Username : pi", "Password: raspberry");									
+									break;
+								case 2: // Restart
+									lcd_display_message(NULL, "Restarting", "Back soon!", NULL);
+									exit(0);
+									break;
+								case 3: // Shutdown
+									lcd_display_message(NULL, "Shutting down", "Please power down", NULL);									
+									execute_command(-1, "sudo shutdownnow", true);					
+									break;
+								case 4: // Cancel
+									lcd_display_message(NULL, "OK", NULL, NULL);
+									done = true;
+									break;
+								}
+							
+							return;
+						}						
+						usleep(100000);
+					}
+				}
+				
+			}
+			usleep(100000);			
+		}	
+	}
+}
 
 
 // Reads the button and updates the LEDs according to the contents of shared_data every 100 milliseconds
@@ -242,15 +384,15 @@ void* gpio_thread_function(void* arg) {
 		if (((button_state0 == BUTTON_LONG_PRESS) && (button_state1 != BUTTON_NOT_PRESSED)) ||
 		    ((button_state1 == BUTTON_LONG_PRESS) && (button_state0 != BUTTON_NOT_PRESSED))) {
 				
-			// Both buttons held. Shutdown.
-			lcd_display_message(NULL, "Restarting", "See you soon!", NULL);
+			// Both buttons held. Display System menu
 			for (int device_id=0; device_id < MAX_USB_CHANNELS; device_id++) {
 				shared_data_p->channel_info[device_id].halt = true;
 			}
-			error_beep();
 			memset(bits, 0, sizeof(bits));
 			send_led_data(bits, sizeof(bits));
-			exit(0);
+			long_beep();
+			display_system_menu();
+			wait_for_button_release();
 		}
 
 		
