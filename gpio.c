@@ -272,7 +272,7 @@ void display_system_menu(void) {
 									break;
 								case 3: // Shutdown
 									lcd_display_message(NULL, "Shutting down", "Please power down", NULL);									
-									execute_command(-1, "sudo shutdownnow", true);					
+									execute_command(-1, "sudo shutdown now", true);					
 									break;
 								case 4: // Cancel
 									done = true;
