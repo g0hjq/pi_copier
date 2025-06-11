@@ -231,7 +231,7 @@ int load_master() {
 	// Wait for USB removed
 	printf("Waiting for master USB to be removed\n");
 	while(!usb_device_removed(name, path)) {
-		usleep(100000);
+		usleep(50000);
 	}
 	
 	set_state(0, EMPTY);
@@ -323,12 +323,13 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 	int lcd_line = hub_number*2;
 
 	for (int i=0; i<MAX_USB_CHANNELS; i++)
-	{
+	{		
 		ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[i];
-		total_bytes_copied += channel_info_p->bytes_copied;
 
 		if (channel_info_p->hub_number == hub_number)
 		{
+			total_bytes_copied += channel_info_p->bytes_copied;
+			
 			ChannelStateEnum state = channel_info_p->state;
 			if ((state == STARTING) || (state == ERASING) || 
 				(state == FORMATING) || (state == PARTITIONING) || (state == MOUNTING) ||
@@ -347,7 +348,8 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 		}
 	}				
 
-
+	printf("%d : %d %d \n", hub_number, copying, verifying);
+	
 	if (channel_busy[hub_number]) {
 		// Usb hub is busy.
 		if (button_state == BUTTON_LONG_PRESS)
