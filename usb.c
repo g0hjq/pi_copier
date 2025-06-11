@@ -132,6 +132,7 @@ void assign_device_paths_for_hub(int hub_number, char* clue)
 
 
 
+// Returns -1 if the path is invalid
 int get_device_id_from_path(const SharedDataStruct* shared_data_p, char* path)
 {
 	// Scan all usb ports looking for a matching device path.
@@ -157,8 +158,6 @@ int get_device_id_from_path(const SharedDataStruct* shared_data_p, char* path)
 		}
 	}
 	
-	print_shared_data(shared_data_p);
-
 	// And scan again
 	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++)
 	{
@@ -170,8 +169,8 @@ int get_device_id_from_path(const SharedDataStruct* shared_data_p, char* path)
 		}		
 	}
 	
-	fprintf(stderr, "ERROR: get_device_id_from_path failed\n");
-	exit(1);
+	fprintf(stderr, "ERROR: get_device_id_from_path failed. Path=%s\n", path);
+	return -1;
 }
 
 
@@ -256,7 +255,7 @@ void *monitor_usb_drives_thread_function(void* arg) {
 						int device_id = -1;
 						if (shared_data_p)
 						{
-							device_id = get_device_id_from_path(shared_data_p, buff);	
+							device_id = get_device_id_from_path(shared_data_p, buff);
 							//printf("buff=%s, device_id=%d\n", buff, device_id);
 						}
 						

@@ -46,9 +46,11 @@ void beep() {
 	tone(1000, 200);
 }
 
+
 void long_beep() {
 	tone(1000, 1000);
 }
+
 
 void double_beep() {
 	tone(1000, 80);
@@ -88,15 +90,24 @@ static void set_leds(int port_num, ChannelStateEnum state, unsigned char *red_p,
 		case FORMATING:
 		case COPYING:
 		case UNMOUNTING:		
-			*yellow_p = ((milliseconds - (port_num*50)) % 500) < 250 ? 0 : 1;
+			*yellow_p = ((milliseconds - (port_num*70)) % 600) < 300 ? 0 : 1;
 			break;
 			
+		case VERIFYING:		
+			*yellow_p = ((milliseconds - (port_num*20)) % 200) < 100 ? 0 : 1;
+			break;
+		
 		case SUCCESS:
-			*green_p = 1;		
+			*green_p = 1;
 			break;
 
 		case FAILED:
 			*red_p = 1;
+			break;
+			
+		case CRC_FAILED:
+			*red_p = 1;
+			*yellow_p = 1;
 			break;
 			
 		case LED_TEST:

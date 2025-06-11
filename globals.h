@@ -31,17 +31,20 @@
 
 
 #define VERSION_STRING "v0.0.4  2025-06-03"
+#define VERIFY true
+#define CRC_SIZE 1*1024*1024   // CRCs will only be generated and checked for the first 1MB in each file
 
 #define SHM_NAME "/usb_copier_shm"
-#define RAMDIR_PATH "/var/ramdrive"
+#define RAMDIR_PATH "/var/ramdrive/master"
 #define MOUNT_POINT "/mnt/usb"
 #define USB_CONFIG_FILE "./usb_ports.config"
+#define CRC_FILE "/var/ramdrive/crc.txt"
 
 
 #define MAX_FILES 1024      // Maximum number of files/directories per directory
 #define COPY_BUFFER_SIZE 65536  // Buffer size for file copying
 #define STRING_LEN 256        // general name string length
-#define PATH_LEN 256       // Maximum path length
+#define PATH_LEN 512          // Maximum path length
 
 #define NUMBER_OF_HUBS 2
 #define PORTS_PER_CHANNEL 7
@@ -74,10 +77,12 @@ typedef enum {
 		MOUNTING = 7,
 		COPYING = 8,
 		UNMOUNTING = 9,
-		SUCCESS = 10,
-		FAILED = 11,
-		LED_TEST = 12,
-		INDICATING = 13,  // sequence red/yellow/green to show which slot to use to read master & map usb
+		VERIFYING = 10,
+		SUCCESS = 11,
+		FAILED = 12,
+		CRC_FAILED = 13,
+		LED_TEST = 14,
+		INDICATING = 15  // sequence red/yellow/green to show which slot to use to read master & map usb
 } ChannelStateEnum ;
 
 
