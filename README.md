@@ -50,12 +50,53 @@ On startup, the user is prompted to insert the master USB. When the server detec
 
 #### USB Port Mapping
 
-#### Sorting
+#### File Ordering
 
 #### Wear Reduction
 
+#### Files
+All the below files are in /home/pi/copier
+
+| Filename         | Purpose 
+|------------------|---------------------------------------------------|
+| server.*         | The server executable                             |
+| client.*         | The client executable                             |
+| gpio.*           | controls the LEDs and polls the push buttons      |
+| lcd.*            | Displays text and the progress bar on the LCD     |
+| usb.*            | Polls the USB ports looking for flash drives to be inserted and removed |
+| utilities.*      | Shared helper functions                           |
+| globals.h        | Various type definitions and constants            |
+| makefile         | Used by the build process                         |
+| usb_ports.config | This is used by the port mapping, and MAY need to be updated if you change the USB hubs |
+| setup_ap.sh      | Sets the Raspberry Pi WiFi into Access Point mode to allow direct access from a laptop without connecting via a WiFi hub |
+| disable_ap.sh      | Sets the Raspberry Pi into normal WiFi mode for connections via a WiFi hub |
+
+
+
+#### Compiling the program
 
 ## Installation
 
 ## User Guide
+
+#### LED Indicators
+
+| LEDs                  | Meaning                                        |
+|-----------------------|------------------------------------------------|
+| None                  | No USB drive found                             |
+| Amber                 | Ready to copy                                  |
+| Flashing Amber        | Copying                                        |
+| Fast Flashing Amber   | Verifying                                      |
+| Green                 | Copy Finished Succesfully                      |
+| Red                   | Copy Failed                                    |
+| Red + Amber           | Copy OK but Verify Failed                      |
+| Red+Amber+Green Flash | Insert Master USB here                         |
+
+## Wifi Connections
+
+AP Mode
+
+Wifi Mode
+
+
 
