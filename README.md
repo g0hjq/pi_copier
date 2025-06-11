@@ -17,12 +17,14 @@ You will need the following:
 * 1 x Raspberry Pi copier backpack. This is optional but neater than wiring directly to the Raspberry Pi's GPIO pins (See later)
 
 ### LED Boards
-There are two of these. They fit above each USB hub and contain 21 LEDs in 7 sets of Red, Yellow and Green LEDs to show the status of each port. If you use different USB hubs you may need to redesign these. 74HC595 shift register allow the Raspberry Pi to control all the LEDs using just three GPIO pins - Data, Clock and Latch. 
+There are two of these. They fit above each USB hub and contain 21 LEDs in 7 sets of Red, Yellow and Green LEDs to show the status of each port. If you use different USB hubs you may need to redesign these. 74HC595 shift register allow the Raspberry Pi to control all the LEDs using just three GPIO pins - Data, Clock and Latch.
+
+![alt text](images/Screenshot 2025-06-11 133833.png)
+
 
 ### Raspberry Pi backpack
 This simplifies connections to the Raspberry PI's GPIO ports. It is optional, in that you may wire the LED boards directly to the Raspberry Pi and also the LCD module (via an I2C Level shifter). 
-
-
+![alt text](images/Screenshot 2025-06-11 133908.png)
 
 ## Software
 
