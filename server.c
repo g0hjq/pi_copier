@@ -11,8 +11,6 @@ char buffer[STRING_LEN*2];
 SharedDataStruct* shared_data_p = NULL;
 
 
-
-
 //------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------
@@ -197,13 +195,24 @@ int load_master() {
 	}
 
 	
-	// Copy the master files to the ramdrive
+	// Copy the master files to the ramdrive and save the CRCs for each to crc.txt on the ramdrive
+	initialise_crc_table();
+    FILE *crc_file = fopen(CRC_FILE, "w");
+    if (!crc_file) {
+        fprintf(stderr, "Error: Cannot create CRC file %s\n", CRC_FILE);
+       return 0;
+    }
+
+	
 	shared_data_p->total_size = 0;
 	bool halt = false;
-	if (copy_directory(mount_point, RAMDIR_PATH, &halt, &shared_data_p->total_size) != 0) {
+	if (copy_directory(mount_point, RAMDIR_PATH, &halt, &shared_data_p->total_size, crc_file) != 0) {
 		fprintf(stderr, "ERROR: copy_directory failed\n");
+		fclose(crc_file);
         return 1;
 	}
+
+	fclose(crc_file);
 
 	printf("Total Size=%lu\n", shared_data_p->total_size);
 
@@ -224,6 +233,7 @@ int load_master() {
 	while(!usb_device_removed(name, path)) {
 		usleep(100000);
 	}
+	
 	set_state(0, EMPTY);
 	
 	lcd_clear();
@@ -305,26 +315,31 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 	static bool channel_busy[NUMBER_OF_HUBS] = {false};
 
 	// count the number of running, failed and finished processes for this hub
-	int busy=0; 
-	int fail=0; 
-	int pass=0; 
+	int copying = 0; 
+	int verifying = 0;
+	int fail = 0; 
+	int pass = 0; 
 	off_t total_bytes_copied = 0;
+	int lcd_line = hub_number*2;
 
 	for (int i=0; i<MAX_USB_CHANNELS; i++)
 	{
 		ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[i];
+		total_bytes_copied += channel_info_p->bytes_copied;
+
 		if (channel_info_p->hub_number == hub_number)
 		{
 			ChannelStateEnum state = channel_info_p->state;
 			if ((state == STARTING) || (state == ERASING) || 
 				(state == FORMATING) || (state == PARTITIONING) || (state == MOUNTING) ||
 				(state == COPYING) || (state == UNMOUNTING)) { 
-				busy++; 
-				total_bytes_copied += channel_info_p->bytes_copied;
+				copying++; 
+			}
+			else if (state == VERIFYING) { 
+				verifying++; 
 			}
 			else if (state == SUCCESS) { 
 				pass++; 
-				total_bytes_copied += channel_info_p->bytes_copied;
 			}
 			else if (state == FAILED) { 
 				fail++; 
@@ -339,23 +354,26 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 		{
 			printf("Terminate %d\n", hub_number);
 			terminate(hub_number);
-			lcd_write_string("CANCELLED", hub_number*2);
+			lcd_write_string("CANCELLED", lcd_line);
 			error_beep();
 			channel_busy[hub_number] = false;
 		} 
 		else {		
-			if (busy > 0) {
+			if (copying > 0) {
 			    // copying. Display progress so far
 				float percent;
-				int count = busy + pass;
+				int count = copying + pass + fail;
 				if ((count == 0) || (shared_data_p->total_size==0))
 					percent = 0;
 				else
 					percent = 100*total_bytes_copied / shared_data_p->total_size / count;
 				
-				sprintf(buffer, "Busy=%-2u OK=%-2u Bad=%-2u", busy, pass, fail);		
-				lcd_write_string(buffer, hub_number*2);				
-				lcd_display_bargraph(percent, hub_number*2+1);				
+				sprintf(buffer, "Busy=%-2u OK=%-2u Bad=%-2u", copying + verifying, pass, fail);		
+				lcd_write_string(buffer, lcd_line);				
+				lcd_display_bargraph(percent, lcd_line+1);				
+			}
+			else if (verifying > 0) {
+				lcd_write_string("Verifying", lcd_line+1);
 			}
 			else 
 			{
@@ -365,10 +383,10 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 				int seconds = end_time[hub_number].tv_sec - start_time[hub_number].tv_sec;
 				
 				sprintf(buffer, "Done. OK=%-2u Bad=%-2u", pass, fail);		
-				lcd_write_string(buffer, hub_number*2);				
+				lcd_write_string(buffer, lcd_line);				
 
 				snprintf(buffer, sizeof(buffer), "Wrote %luMB in %1u:%02u", total_bytes_copied/1024/1024, seconds/60, seconds%60);
-				lcd_write_string(buffer, hub_number*2 + 1);
+				lcd_write_string(buffer, lcd_line + 1);
 
 				beep();
 				channel_busy[hub_number] = false;
@@ -382,8 +400,8 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 			printf("Channel %d start\n", hub_number);
 			gettimeofday(&start_time[hub_number], NULL);
 			channel_busy[hub_number] = true;
-			lcd_write_string("", hub_number*2);
-			lcd_write_string("", hub_number*2+1);		
+			lcd_write_string("", lcd_line);
+			lcd_write_string("", lcd_line+1);		
 			beep();
 			run(hub_number);
 		}
@@ -454,7 +472,7 @@ int main() {
 	
 	
 	// Main program loop
-	lcd_display_message("Ready to copy", "Insert disks then", "press Red button", "to begin");
+	lcd_display_message("Ready to copy.", "Insert disks then", "press Red button", "to begin");
 	double_beep();
 	bool starting = true;
 	

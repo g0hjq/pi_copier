@@ -2,34 +2,32 @@
 #include "utilities.h"
 
 
+
 ChannelInfoStruct* client_info_p = NULL;
 SharedDataStruct* shared_data_p = NULL;
 int device_id = -1;
 int shm_fd = -1;
 
 char buffer[STRING_LEN*2];
+extern uint32_t crc32_table[256];
 
 
 
 
 // Reports the error message back to the server and shuts down the client program
 void failed(char* errormessage) {
-    char temp_str[STRING_LEN];
+	
+    char temp_str[STRING_LEN*2];
     char error_buf[STRING_LEN];
 	
-    int offset = snprintf(temp_str, sizeof(temp_str), "[%d] ", device_id);
-    
-    if (errno != 0) {
-        if (strerror_r(errno, error_buf, sizeof(error_buf)) == 0) {
-            offset += snprintf(temp_str + offset, sizeof(temp_str) - offset, "%s ", error_buf);
-        } else {
-            offset += snprintf(temp_str + offset, sizeof(temp_str) - offset, "Error ");
-        }
-    }
+	if (strerror_r(errno, error_buf, sizeof(error_buf)) == 0) {	
+		snprintf(temp_str, sizeof(temp_str), "ERROR: [%d] %s - %s\n", device_id, errormessage, error_buf);
+	}
+	else {
+		snprintf(temp_str, sizeof(temp_str), "ERROR: [%d] %s\n", device_id, errormessage);
+	}
 	
-    snprintf(temp_str + offset, sizeof(temp_str) - offset, "%s", errormessage);
-    
-    fprintf(stderr, "ERROR: %s\n", temp_str);
+    fprintf(stderr, temp_str);
     
     if (client_info_p) {
         client_info_p->state = FAILED;
@@ -48,7 +46,146 @@ void failed(char* errormessage) {
 }
 
 
+// -------------------------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------
+// Verify
+// -------------------------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------
 
+
+// Compute CRC-32 checksum of a file
+uint32_t compute_crc32(char *filename) {
+
+    FILE *file = fopen(filename, "rb");
+    if (!file) {
+        fprintf(stderr, "VERIFY ERROR : Compute CRC cannot open file %s\n", filename);
+		return 0;
+    }
+
+    uint32_t crc = 0xFFFFFFFF;  // Initial CRC value
+	uint32_t crc_bytes = 0;
+    int byte;
+
+    while (((byte = fgetc(file)) != EOF) && (crc_bytes < CRC_SIZE)) {
+		crc = (crc << 8) ^ crc32_table[((crc >> 24) ^ byte) & 0xFF];
+		crc_bytes++;
+	}
+
+    crc ^= 0xFFFFFFFF;  // Final XOR
+    fclose(file);
+	
+    return crc;
+}
+
+
+// Splits one line of the CRC file (in format <filename>[TAB]<crc>) into filename and CRC
+void parse_crc_file(const char *crc_line, char *filename, uint32_t *crc) {
+
+    // Find the tab separator
+    const char *tab = strstr(crc_line, "\t");
+    if (!tab) {
+        fprintf(stderr, "ERROR: No tab separator found in CRC file\n");
+		exit(0);
+    }
+
+    // Extract filename (before tab)
+    size_t filename_len = tab - crc_line;
+    strncpy(filename, crc_line, filename_len);
+    filename[filename_len] = '\0'; // Null-terminate
+
+    // Extract CRC (after tab)
+    const char *crc_str = tab + 1; // Skip the tab
+    *crc = (unsigned int)strtoul(crc_str, NULL, 16); // Convert hex to unsigned int}
+}
+
+
+// Returns true if all files can be read and their CRCs are correct
+bool verify(char* partition_name, char *mount_point) {
+	
+	static struct timeval start_time;
+	static struct timeval end_time;
+
+	uint32_t expected_crc, actual_crc;
+	char filename[PATH_LEN];
+	char tmpstr[PATH_LEN];
+
+	gettimeofday(&start_time, NULL);
+
+	printf("[%d] Starting Verify\n", device_id);
+
+	initialise_crc_table();
+	
+	// Open the CRC file in the Ramdrive
+	FILE *crc_file = fopen(CRC_FILE, "r");
+    if (!crc_file) {
+	    fprintf(stderr, "VERIFY ERROR: Unable to open CRC file\n");
+		return false;
+    }
+	
+	// Mount the USB drive
+	if (!client_info_p->halt)
+	{		
+		snprintf(buffer, sizeof(buffer), "mount %s %s >/dev/null", partition_name, mount_point);
+		if (execute_command(device_id, buffer, false) != 0) {
+			fclose(crc_file);
+			fprintf(stderr, "VERIFY ERROR: Unable to mount the USB drive\n");
+			return false;
+		}
+	}
+
+	printf("[%d] Verify checking CRCs\n", device_id);
+
+    // Compare the CRC of each file with those stored in the crc file
+	while (!client_info_p->halt) {
+		char* ptr = fgets(buffer, sizeof(buffer), crc_file);
+
+		if (!ptr) {
+			break;
+		}
+		parse_crc_file(buffer, filename, &expected_crc);
+		strcpy(tmpstr, mount_point);
+		strcat(tmpstr, "/");
+		strcat(tmpstr, filename);			
+	
+		actual_crc = compute_crc32(tmpstr);
+					
+		if (expected_crc != actual_crc) {
+			fprintf(stderr, "VERIFY ERROR: CRC Invalid. File='%s'\n", filename);
+			return false;
+		}				
+    }
+	
+	gettimeofday(&end_time, NULL);
+	int seconds = end_time.tv_sec - start_time.tv_sec;
+ 
+	printf("[%d] Verify complete in %d seconds\n", device_id, seconds);
+
+    // Unmount the USB drive
+	snprintf(buffer, sizeof(buffer), "umount %s", mount_point);
+	if (execute_command(device_id, buffer, false) != 0) {
+		fprintf(stderr, "VERIFY ERROR: Cannot unmount device\n");
+		return false;
+	}
+
+	printf("[%d] Finished\n", device_id);
+
+	fclose(crc_file);
+
+
+	return true;
+}
+
+
+
+//---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+// Program Main
+//---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
 
@@ -93,11 +230,6 @@ int main(int argc, char *argv[]) {
     }
 
 	client_info_p = &shared_data_p->channel_info[device_id];
-
-
-    // Error handling test : Trigger a segmentation fault
-    //int *ptr = NULL;
-    //*ptr = 42; // This will cause SIGSEGV
 
 
 	//------------------------------------------------------------
@@ -227,26 +359,39 @@ int main(int argc, char *argv[]) {
     // Step 8: Copy all files from Ramdrive to the USB drive, alphabetically sorted
 	if (!client_info_p->halt)
 	{	
+		printf("[%d] Copying files\n", device_id);
 		client_info_p->state = COPYING;
-		if (copy_directory(RAMDIR_PATH, mount_point, &client_info_p->halt, &client_info_p->bytes_copied) != 0) {
+		if (copy_directory(RAMDIR_PATH, mount_point, &client_info_p->halt, &client_info_p->bytes_copied, NULL) != 0) {
 			failed("Copying files");
 		}
 	}
 
     // Step 9: Unmount the USB drive
-	if (!client_info_p->halt)
-	{		
-		client_info_p->state = UNMOUNTING;
-		//snprintf(buffer, sizeof(buffer), "eject %s 2>/dev/null", mount_point);
-		snprintf(buffer, sizeof(buffer), "umount %s", mount_point);
-		if (execute_command(device_id, buffer, false) != 0) {
-			failed("Unmounting drive");
-		}
+	client_info_p->state = UNMOUNTING;
+	//snprintf(buffer, sizeof(buffer), "eject %s 2>/dev/null", mount_point);
+	snprintf(buffer, sizeof(buffer), "umount %s", mount_point);
+	if (execute_command(device_id, buffer, false) != 0) {
+		failed("Unmounting drive");
 	}
 
+// Step 10: Verify all files have been written (Optional)
+#if VERIFY
+	if (!client_info_p->halt)
+	{
+		client_info_p->state = VERIFYING;
+		bool success = verify(partition_name, mount_point);
+		if (success) {
+			client_info_p->state = client_info_p->halt ? FAILED : SUCCESS;	
+		}
+		else
+		{
+			client_info_p->state = CRC_FAILED;
+		}		
+	}
+#else		
 	client_info_p->state = client_info_p->halt ? FAILED : SUCCESS;
+#endif
 
-	
 	//------------------------------------------------------------
 	// End of main program
 	//------------------------------------------------------------
