@@ -72,8 +72,16 @@ All the below files are in /home/pi/copier
 | disable_ap.sh      | Sets the Raspberry Pi into normal WiFi mode for connections via a WiFi hub |
 
 
+Compiling the program
 
-#### Compiling the program
+```
+cd ~/copier
+make
+```
+To start the program
+```
+./server
+```
 
 ## Installation
 
