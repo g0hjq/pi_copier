@@ -1,6 +1,8 @@
 # pi_copier
 A Raspberry Pi based USB flash drive copier for talking newspapers and the like.
 
+![alt text](images/PXL_20250601_150253859.jpg "Pi Copier")
+
 ## Introduction
 
 ## Hardware
