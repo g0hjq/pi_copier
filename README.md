@@ -12,7 +12,11 @@ You will need the following:
 * Two USB hubs. I used a pair of TP-Link UH700 7-Port USB 3 hubs. These come with an external 12v power supply but seem to work OK without for us, drawing their power from the Raspberry Pi's USB ports. If you are copying to high-speed flash drives, you may need to supply this extra power.
 * 20-character x 4-line (2004) LCD module with I2C adaptor
 * 2 x LED board (See later)
-* 1 x Raspberry Pi copier backpack. This is optional but neater than wiring directly to the Raspberry Pi's GPIO pins
+* 1 x Raspberry Pi copier backpack. This is optional but neater than wiring directly to the Raspberry Pi's GPIO pins (See later)
+
+### LED Boards
+There are two of these. They fit above each USB hub and contain 21 LEDs in 7 sets of Red, Yellow and Green LEDs to show the status of each port. If you use different USB hubs you may need to redesign these. 74HC595 shift register allow the Raspberry Pi to control all the LEDs using just three GPIO pins - Data, Clock and Latch. 
+
 
 ## Installation
 
