@@ -24,9 +24,36 @@ There are two of these. They fit above each USB hub and contain 21 LEDs in 7 set
 
 ### Raspberry Pi backpack
 This simplifies connections to the Raspberry PI's GPIO ports. It is optional, in that you may wire the LED boards directly to the Raspberry Pi and also the LCD module (via an I2C Level shifter). 
+
 ![alt text](images/backpack.png)
 
 ## Software
+
+The software is written in C for Raspberry Pi OS Bookworm (64-bit lite version). 
+
+It comprises of two executables : server and client
+
+* Server - This is the main program, which should be started automatically at bootup. It is responsible for the "user interface". It monitors the USB ports and buttons and drives the LCD, LEDs and speaker. When a start button is pressed, it starts up one or more instances of the client executable - one for each target USB drive.
+  
+* Client - This is the "worker". It formats, writes and verifies the data on a single USB flash drive, then terminates when complete. The Server program creates an instance of the client program for each USB drive.
+
+#### Data Sharing
+
+An area of Linux shared memory is used to send information to the client processes and for the clients to signal progress and success/fail back to the main server application.
+
+### Ram Drive
+A tmpfs partition at least 2GB must be manually created in the memory of the Raspberry Pi in /var/ramdrive as part of the installation process. This is used to store a fast copy of all the files on the master Flash drive. It is also used to hold a file crc.txt containing the CRC of each master file.
+
+#### Server Workflow
+On startup, the user is prompted to insert the master USB. When the server detects a drive has been inserted into USB port 1, its entire contents are copied to to the ramdrive and the CRC computed.
+
+
+#### USB Port Mapping
+
+#### Sorting
+
+#### Wear Reduction
+
 
 ## Installation
 
