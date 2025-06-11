@@ -85,6 +85,132 @@ To start the program
 
 ## Installation
 
+#### Raspbery Pi Configuration
+
+SSH to: 192.168.0.244  or raspberrypi.local
+Or in AP Mode: 192.168.4.1
+
+username: pi  password: raspberry
+
+#### Setting up a RAM drive on Raspberry Pi
+```
+ sudo mkdir /var/ramdrive 
+ sudo nano /etc/fstab
+   and add the line
+    tmpfs /var/ramdrive tmpfs nodev,nosuid,size=2G 0 0 
+
+ sudo mount -a
+ systemctl daemon-reload
+``` 
+
+#### To set a fixed IP Address for wifi
+```
+sudo nmcli con mod preconfigured ipv4.addresses 192.168.0.244/23
+sudo nmcli con mod preconfigured ipv4.gateway 192.168.0.1
+sudo nmcli con mod preconfigured ipv4.dns "192.168.0.1 8.8.8.8"
+sudo nmcli con mod preconfigured ipv4.method manual
+```
+
+#### Setting up Samba file sharing
+See https://pimylifeup.com/raspberry-pi-samba/
+
+Username = pi
+Password = raspberry
+
+##### Enabling I2C for the LCD
+```
+sudo raspi-config
+  (8 Update)
+  (3 Interface options) -> (I4 I2C) -> YES
+```  
+  
+#### Install Libraries
+```
+sudo apt install libudev-dev
+sudo apt install libgpiod-dev
+```
+
+##### Setting up AP Mode
+See enable_ap.sh. 
+
+**Dont forget to change 'my-password'**
+```
+nmcli con add type wifi ifname wlan0 mode ap con-name Copier_AP ssid Copier_AP autoconnect yes
+nmcli con modify Copier_AP 802-11-wireless.band bg
+nmcli con modify Copier_AP 802-11-wireless.channel 7
+nmcli con modify Copier_AP wifi-sec.key-mgmt wpa-psk
+nmcli con modify Copier_AP wifi-sec.psk "my-password"
+nmcli con modify Copier_AP ipv4.method shared ipv4.address 192.168.4.1/24
+nmcli con modify Copier_AP ipv6.method disabled
+nmcli con up Copier_AP
+```
+
+#### Enable Overlay mode and set boot partition to READ-ONLY
+```
+sudo raspi-config
+  (4 Performance Options)
+  (P2 Overlay File System Enable/disable read-only file system)
+     <YES>
+Then boot partition to read-only
+Reboot
+```
+
+#### Auto Start
+
+1. Create a systemd Service File
+```
+	sudo nano /etc/systemd/system/usbcopier.service
+
+	Add the following configuration to the file:
+
+		[Unit]
+		Description=Usb Copier Auto-Start Service
+		commAfter=network.target
+
+		[Service]
+		ExecStart=/home/pi/copier/server
+		WorkingDirectory=/home/pi/copier
+		Restart=always
+		RestartSec=5
+		User=pi
+		Group=pi
+		StandardOutput=append:/var/log/usbcopier.log
+		StandardError=append:/var/log/usbcopier.log
+		Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+		[Install]
+		WantedBy=multi-user.target
+```
+
+2. Create and set permissions for the log file:
+
+```
+ chmod +x /home/pi/copier/server
+	sudo touch /var/log/usbcopier.log
+	sudo chmod 664 /var/log/usbcopier.log
+	sudo chown pi:pi /var/log/usbcopier.log
+```	
+	
+3. Enable and Start the Service
+```
+	Reload systemd to recognize the new service file:
+		sudo systemctl daemon-reload
+
+	Enable the service to start on boot:
+		sudo systemctl enable usbcopier.service
+		sudo systemctl disable usbcopier.service
+
+	Start the service usbcopier to test:
+		sudo systemctl start usbcopier.service
+		sudo systemctl stop usbcopier.service
+
+5. Verify the Service
+	sudo systemctl status usbcopier.service
+
+6. Verify logs
+	cat /var/log/usbcopier.log
+```
+
 ## User Guide
 
 #### LED Indicators
