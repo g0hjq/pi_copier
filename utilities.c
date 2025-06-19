@@ -152,7 +152,6 @@ void extract_usb_path(const char *input, char *output) {
 /**
  * Function to execute shell commands and check for errors
  */
-
 int execute_command(const int device_id, const char *cmd, const bool ignore_errors) {
 	
     if (!cmd || *cmd == '\0') {
@@ -175,8 +174,9 @@ int execute_command(const int device_id, const char *cmd, const bool ignore_erro
 
     if (!ignore_errors && WIFEXITED(ret) && WEXITSTATUS(ret) != 0) {
         fprintf(stderr, "ERROR: Command '%s' failed with exit code %d\n", cmd, WEXITSTATUS(ret));
-        return -1;
+        return ret;
     }
+	
     return 0;
 }
 

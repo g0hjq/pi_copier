@@ -9,6 +9,7 @@
 
 char buffer[STRING_LEN*2];
 SharedDataStruct* shared_data_p = NULL;
+sem_t ffmpeg_sem;
 
 
 //------------------------------------------------------------------------------------------------
@@ -34,6 +35,156 @@ void set_all_states(ChannelStateEnum state) {
 }
 
 
+
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+// run_ffmpeg
+// 
+// Equalizes loudness, trims silence of beginning and reduces noise in quiet sections of an MP3 file
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+
+//ffmpeg -i MAY29006.mp3 -af 
+// "agate=mode=downward:ratio=1.2, silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.7, loudnorm=I=-18:TP=-2:LRA=11" 
+// -ar 44.1k -ab 128k -ac 1 output06.mp3
+void* ffmpeg_thread_function(void* arg)
+{
+	char mp3_file[STRING_LEN];
+	char temp_file[STRING_LEN];
+	char buffer2[STRING_LEN*2];
+	
+	int ret = 0;
+	
+	strcpy(mp3_file, (char*)arg);
+	
+	const char* last_dot = strrchr(mp3_file, '.');
+	size_t base_len = last_dot - mp3_file;
+	
+	strncpy(temp_file, mp3_file, base_len);
+	temp_file[base_len] = 0;
+	strcat(temp_file, ".tmp");
+
+
+	// Use a semaphone to only allow 4 instances of ffmpeg to run at one time (one per cpu core)
+	printf("*******run_ffmpeg(%s) waiting for semaphore\n", mp3_file);
+	if (sem_wait(&ffmpeg_sem) == -1)
+	{
+		fprintf(stderr, "ERROR: sem_wait failed\n");
+		return(NULL);
+	}
+	
+
+	printf("********Semaphore acquired. run_ffmpeg(%s, %s)\n", mp3_file, temp_file);
+	
+	// run ffmpeg. output in 128K mono
+	snprintf(buffer2, sizeof(buffer2), "ffmpeg -i %s -y -loglevel error -af \"%s\" -f mp3 -ar 44.1K -ab 128k -ac 1 %s", mp3_file, FFMPEG_FILTERS, temp_file);
+	ret = execute_command(-1, buffer2, false);
+	
+	usleep(2*1024*1024);  // give time for linux to update its filesystem
+	
+	if (sem_post(&ffmpeg_sem) == -1) {
+    	fprintf(stderr, "ERROR: sem_post failed\n");
+		return(NULL);
+	}
+		
+	printf("*******run_ffmpeg(%s) ....FINISHED\n", mp3_file);
+	
+	if (ret != 0) {
+		fprintf(stderr, "ERROR running ffmpeg\n");
+		return(NULL);
+	}
+
+	snprintf(buffer2, sizeof(buffer2), "rm %s", mp3_file);
+	if (execute_command(-1, buffer2, false) != 0) {
+		fprintf(stderr, "ERROR deleting %s\n", mp3_file);
+		return(NULL);
+	}
+		
+
+	snprintf(buffer2, sizeof(buffer), "mv %s %s", temp_file, mp3_file);		
+	if (execute_command(-1, buffer2, false) != 0) {
+		fprintf(stderr, "ERROR renaming %s to %s\n", temp_file, mp3_file);
+	}
+	
+	return NULL;
+}
+
+
+// Function to check if a file is an MP3
+int is_mp3(const char *filename) {
+    const char *ext = strrchr(filename, '.');
+    return ext && strcmp(ext, ".mp3") == 0;
+}
+
+
+// Multi-threaded Function to process all MP3 files in a directory, 4 at a time 
+int process_all_mp3_files(const char *dir_path) {
+	
+	int ret = 0;
+	pthread_t threads[MAX_FILES];
+	char* filenames[MAX_FILES];
+	
+	int filename_count = 0;
+	
+    // Initialize the unnamed semaphore with value 4
+    if (sem_init(&ffmpeg_sem, 0, NUMBER_OF_FFMPEG_THREADS) == -1) {
+        perror("sem_init failed");
+        exit(1);
+    }
+
+    DIR *dir = opendir(dir_path);
+    if (!dir) {
+		fprintf(stderr, "ERROR opening directory %s\n", dir_path);
+		return -1;
+    }
+
+    struct dirent *entry;
+    char mp3_file[STRING_LEN*2];
+
+
+	// Get the path of each file in the directory
+    while ((entry = readdir(dir))) {			
+        if (entry->d_type != DT_DIR && is_mp3(entry->d_name)) {				
+            snprintf(mp3_file, sizeof(mp3_file), "%s/%s", dir_path, entry->d_name);
+			filenames[filename_count] = strdup(mp3_file);
+			filename_count++;
+		}
+	}
+		
+		
+    // Create a new thread for each file
+    for (int i = 0; i < filename_count; i++) {
+		if (pthread_create(&threads[i], NULL, ffmpeg_thread_function, (void*)filenames[i]) != 0) {
+			perror("pthread_create failed");
+			sem_destroy(&ffmpeg_sem);
+			exit(-1);				
+		}
+		//pthread_join(threads[i], NULL);  // ?????
+    }
+
+
+    // Wait for all threads to complete
+    for (int i = 0; i < filename_count; i++) {
+        if (pthread_join(threads[i], NULL) != 0) {
+            perror("pthread_join failed");
+        }
+    }
+
+
+	// Free allocated strings
+	    for (int i = 0; i < filename_count; i++) {
+			free(filenames[i]); 
+    }
+	
+    // Destroy the semaphore
+    sem_destroy(&ffmpeg_sem);
+
+    closedir(dir);
+
+	return ret;
+}
 
 //------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------
@@ -213,7 +364,6 @@ int load_master() {
 	}
 
 	fclose(crc_file);
-
 	printf("Total Size=%lu\n", shared_data_p->total_size);
 
     // Unmount the USB drive
@@ -348,8 +498,6 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 		}
 	}				
 
-	printf("%d : %d %d \n", hub_number, copying, verifying);
-	
 	if (channel_busy[hub_number]) {
 		// Usb hub is busy.
 		if (button_state == BUTTON_LONG_PRESS)
@@ -468,10 +616,14 @@ int main() {
 	
 	test_leds();
 	
-	load_master();
+	// load_master();????
 	
 	//map_usb_ports();
 	
+
+	lcd_display_message(NULL, "Optimising MP3 files", "Please Wait", NULL);
+	process_all_mp3_files(RAMDIR_PATH);
+
 	
 	// Main program loop
 	lcd_display_message("Ready to copy.", "Insert disks then", "press Red button", "to begin");
