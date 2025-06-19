@@ -82,8 +82,6 @@ void* ffmpeg_thread_function(void* arg)
 	snprintf(buffer2, sizeof(buffer2), "ffmpeg -i %s -y -loglevel error -af \"%s\" -f mp3 -ar 44.1K -ab 128k -ac 1 %s", mp3_file, FFMPEG_FILTERS, temp_file);
 	ret = execute_command(-1, buffer2, false);
 	
-	usleep(2*1024*1024);  // give time for linux to update its filesystem
-	
 	if (sem_post(&ffmpeg_sem) == -1) {
     	fprintf(stderr, "ERROR: sem_post failed\n");
 		return(NULL);
@@ -107,6 +105,7 @@ void* ffmpeg_thread_function(void* arg)
 	if (execute_command(-1, buffer2, false) != 0) {
 		fprintf(stderr, "ERROR renaming %s to %s\n", temp_file, mp3_file);
 	}
+	
 	
 	return NULL;
 }
@@ -161,12 +160,14 @@ int process_all_mp3_files(const char *dir_path) {
 			sem_destroy(&ffmpeg_sem);
 			exit(-1);				
 		}
-		//pthread_join(threads[i], NULL);  // ?????
+		//pthread_join(threads[i], NULL);  // waits for one thread to finish before starting the next
     }
 
 
-    // Wait for all threads to complete
+    // Wait for all threads to complete. Update the LCD bargraph as it goes
     for (int i = 0; i < filename_count; i++) {
+		int percent_complete = (i*100) / filename_count;
+		lcd_display_bargraph(percent_complete, 3);
         if (pthread_join(threads[i], NULL) != 0) {
             perror("pthread_join failed");
         }
@@ -174,8 +175,8 @@ int process_all_mp3_files(const char *dir_path) {
 
 
 	// Free allocated strings
-	    for (int i = 0; i < filename_count; i++) {
-			free(filenames[i]); 
+	for (int i = 0; i < filename_count; i++) {
+		free(filenames[i]); 
     }
 	
     // Destroy the semaphore
@@ -185,6 +186,68 @@ int process_all_mp3_files(const char *dir_path) {
 
 	return ret;
 }
+
+
+
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+// Generate CRCs
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+
+void generate_crcs(char* path, FILE *crc_file) {
+
+	DIR *dir = opendir(path);
+    if (!dir) {
+        perror("opendir");
+        return;
+    }
+
+    struct dirent *entry;
+    struct stat statbuf;
+    char *subpath = NULL;
+
+    while ((entry = readdir(dir))) {
+		
+        // Skip "." and ".." entries
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        // Construct full path
+        size_t path_len = strlen(path) + strlen(entry->d_name) + 2; // +2 for '/' and '\0'
+        subpath = realloc(subpath, path_len);
+        snprintf(subpath, path_len, "%s/%s", path, entry->d_name);
+
+        // Get file stats
+        if (stat(subpath, &statbuf) == -1) {
+            perror("stat");
+            continue;
+        }
+
+        if (S_ISDIR(statbuf.st_mode)) {
+            // Recurse into subdirectory
+            generate_crcs(subpath, crc_file);
+			
+        } else if (S_ISREG(statbuf.st_mode)) {
+            // Check if file ends with ".mp3"
+            size_t len = strlen(entry->d_name);
+            if (len >= 4 && strcasecmp(&entry->d_name[len - 4], ".mp3") == 0) {
+				
+				// Write '<filename>[tab]<crc>' to the CRC file
+				uint32_t actual_crc = compute_crc32(subpath);				
+				fprintf(crc_file, "%s\t%08x\n", entry->d_name, actual_crc);
+            }
+        }
+    }
+
+    free(subpath);
+    closedir(dir);
+}
+
+
 
 //------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------
@@ -259,21 +322,21 @@ void test_leds() {
 
 	printf("LED Test - All Red\n");
 	set_all_states(FAILED);
-	usleep(150000);
+	usleep(100000);
 
 	printf("LED Test - All Yellow\n");
 	set_all_states(READY);
-	usleep(150000);
+	usleep(100000);
 
 	printf("LED Test - All Green\n");
 	set_all_states(SUCCESS);
-	usleep(150000);
+	usleep(100000);
 
 	printf("LED Test - Left to Right\n");
 	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++) {		
 		set_all_states(EMPTY);		
 		set_state(device_id, LED_TEST);
-		usleep(100000);
+		usleep(80000);
 	}
 
 	printf("LED Test - All Off\n");
@@ -346,24 +409,13 @@ int load_master() {
 	}
 
 	
-	// Copy the master files to the ramdrive and save the CRCs for each to crc.txt on the ramdrive
-	initialise_crc_table();
-    FILE *crc_file = fopen(CRC_FILE, "w");
-    if (!crc_file) {
-        fprintf(stderr, "Error: Cannot create CRC file %s\n", CRC_FILE);
-       return 0;
-    }
-
-	
 	shared_data_p->total_size = 0;
 	bool halt = false;
-	if (copy_directory(mount_point, RAMDIR_PATH, &halt, &shared_data_p->total_size, crc_file) != 0) {
+	if (copy_directory(mount_point, RAMDIR_PATH, &halt, &shared_data_p->total_size) != 0) {
 		fprintf(stderr, "ERROR: copy_directory failed\n");
-		fclose(crc_file);
         return 1;
 	}
 
-	fclose(crc_file);
 	printf("Total Size=%lu\n", shared_data_p->total_size);
 
     // Unmount the USB drive
@@ -591,7 +643,7 @@ int main() {
 	
 	// Close in parent, child will inherit if needed
     if (close(shm_fd) == -1) {
-        perror("close");
+        perror("close shm_fd");
         exit(1);
     }
 
@@ -616,15 +668,32 @@ int main() {
 	
 	test_leds();
 	
-	// load_master();????
+	load_master();
 	
 	//map_usb_ports();
 	
 
-	lcd_display_message(NULL, "Optimising MP3 files", "Please Wait", NULL);
+	lcd_display_message("Optimising MP3 files", "Please Wait", NULL, NULL);
 	process_all_mp3_files(RAMDIR_PATH);
 
+	lcd_display_message("Calculating", "Checksums", NULL, NULL);
 	
+	// Copy the master files to the ramdrive and save the CRCs for each to crc.txt on the ramdrive
+	initialise_crc_table();
+	FILE *crc_file = fopen(CRC_FILE, "w");
+	if (!crc_file) {
+		fprintf(stderr, "Error: Cannot create CRC file %s\n", CRC_FILE);
+	   return 0;
+	}
+
+	generate_crcs(RAMDIR_PATH, crc_file);
+		
+    if (fclose(crc_file) == -1) {
+        perror("close crc_file");
+        exit(1);
+    }
+
+
 	// Main program loop
 	lcd_display_message("Ready to copy.", "Insert disks then", "press Red button", "to begin");
 	double_beep();
