@@ -55,31 +55,6 @@ void failed(char* errormessage) {
 // -------------------------------------------------------------------------------------------
 
 
-// Compute CRC-32 checksum of a file
-uint32_t compute_crc32(char *filename) {
-
-    FILE *file = fopen(filename, "rb");
-    if (!file) {
-        fprintf(stderr, "VERIFY ERROR : Compute CRC cannot open file %s\n", filename);
-		return 0;
-    }
-
-    uint32_t crc = 0xFFFFFFFF;  // Initial CRC value
-	uint32_t crc_bytes = 0;
-    int byte;
-
-    while (((byte = fgetc(file)) != EOF) && (crc_bytes < CRC_SIZE)) {
-		crc = (crc << 8) ^ crc32_table[((crc >> 24) ^ byte) & 0xFF];
-		crc_bytes++;
-	}
-
-    crc ^= 0xFFFFFFFF;  // Final XOR
-    fclose(file);
-	
-    return crc;
-}
-
-
 // Splits one line of the CRC file (in format <filename>[TAB]<crc>) into filename and CRC
 void parse_crc_file(const char *crc_line, char *filename, uint32_t *crc) {
 
@@ -361,7 +336,7 @@ int main(int argc, char *argv[]) {
 	{	
 		printf("[%d] Copying files\n", device_id);
 		client_info_p->state = COPYING;
-		if (copy_directory(RAMDIR_PATH, mount_point, &client_info_p->halt, &client_info_p->bytes_copied, NULL) != 0) {
+		if (copy_directory(RAMDIR_PATH, mount_point, &client_info_p->halt, &client_info_p->bytes_copied) != 0) {
 			failed("Copying files");
 		}
 	}

@@ -42,7 +42,7 @@
 #define MOUNT_POINT "/mnt/usb"
 #define USB_CONFIG_FILE "./usb_ports.config"
 #define CRC_FILE "/var/ramdrive/crc.txt"
-#define FFMPEG_FILTERS "agate=mode=downward:ratio=1.2, silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.7, loudnorm=I=-18:TP=-2:LRA=11"
+#define FFMPEG_FILTERS "agate=mode=downward:ratio=1.2, silenceremove=start_periods=1:start_threshold=-40dB:start_silence=0.7, loudnorm=I=-14:TP=-2:LRA=15"
 #define NUMBER_OF_FFMPEG_THREADS 4
 
 	

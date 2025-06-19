@@ -200,13 +200,11 @@ int compare_names(const void *a, const void *b) {
  * @param dest_path Destination file path
  * @param halt_p Pointer to the halt flag. Aborts copy if true
  * @param bytes_copied_p Pointer to store the bytes copied (output)
- * @param crc_file handle for storing the name and CRC for the file being copied. Set to NULL if not required
  * @return 0 on success or halted, -1 on failure
  */
-int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *bytes_copied_p, FILE* crc_file) {
+int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *bytes_copied_p) {
     char error_msg[STRING_LEN];
     struct stat stat_buf;
-    uint32_t crc = 0xFFFFFFFF;  // Initial CRC value
 
     // Get source file size
     if (stat(src_path, &stat_buf) < 0) {		
@@ -232,7 +230,6 @@ int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *
 
     char buffer[COPY_BUFFER_SIZE];
     ssize_t bytes_read;
-	ssize_t crc_bytes = 0;
 
     while ((bytes_read = read(src_fd, buffer, COPY_BUFFER_SIZE)) > 0) {
 		
@@ -246,17 +243,8 @@ int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *
 			return -1;
         }
 		
-		for (int i=0; i < bytes_read; i++) {			
-			if (crc_bytes < CRC_SIZE) {
-				crc = (crc << 8) ^ crc32_table[((crc >> 24) ^ buffer[i]) & 0xFF];
-				crc_bytes++;
-			}
-		}
-		
 		*bytes_copied_p += bytes_read; 	
     }
-
-    crc ^= 0xFFFFFFFF;  // Final XOR
 
     if (bytes_read < 0) {
         snprintf(error_msg, sizeof(error_msg), "Failed to read from '%s'", src_path);
@@ -274,13 +262,6 @@ int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *
 		return -1;
     }
 
-	if (crc_file) {
-		// Write '<filename><tab><crc>' to the CRC file
-		// skip the front (/var/ramdrive/master) part of the filename
-		const char* ptr = dest_path + strlen(RAMDIR_PATH) + 1;  
-		fprintf(crc_file, "%s\t%08x\n", ptr, crc);
-	}
-		
     close(src_fd);
     close(dest_fd);
     return 0;
@@ -297,7 +278,7 @@ int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *
  * @param crc_file handle for storing the name and CRC for the file being copied. Set to NULL if not required
  * @return 0 on success or halted, -1 on failure
  */
-int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_t *bytes_copied_p, FILE* crc_file) {
+int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_t *bytes_copied_p) {
 	
     char error_msg[600];
 
@@ -398,7 +379,7 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 		if (*halt_p) return 0;
 
         if (S_ISREG(stat_buf.st_mode)) {
-            if (copy_file(src_path, dest_path, halt_p, bytes_copied_p, crc_file) < 0) {
+            if (copy_file(src_path, dest_path, halt_p, bytes_copied_p) < 0) {
                 snprintf(error_msg, sizeof(error_msg), "Failed to copy file: '%s' -> '%s'", src_path, dest_path);
 				fprintf(stderr, "ERROR: %s\n", error_msg);
 				return -1;
@@ -429,7 +410,7 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 		if (*halt_p) return 0;
 	
         if (S_ISDIR(stat_buf.st_mode)) {
-            if (copy_directory(src_path, dest_path, halt_p, bytes_copied_p, crc_file) < 0) {
+            if (copy_directory(src_path, dest_path, halt_p, bytes_copied_p) < 0) {
                 snprintf(error_msg, sizeof(error_msg), "Failed to copy subdirectory '%s'", src_path);
 				fprintf(stderr, "ERROR: %s\n", error_msg);
 				return -1;
@@ -456,3 +437,31 @@ void initialise_crc_table() {
         crc32_table[i] = crc;
     }
 }
+
+
+
+
+// Compute CRC-32 checksum of a file. Only the first CRC_SIZE bytes are used.
+uint32_t compute_crc32(char *filename) {
+
+    FILE *file = fopen(filename, "rb");
+    if (!file) {
+        fprintf(stderr, "VERIFY ERROR : Compute CRC cannot open file %s\n", filename);
+		return 0;
+    }
+
+    uint32_t crc = 0xFFFFFFFF;  // Initial CRC value
+	uint32_t crc_bytes = 0;
+    int byte;
+
+    while (((byte = fgetc(file)) != EOF) && (crc_bytes < CRC_SIZE)) {
+		crc = (crc << 8) ^ crc32_table[((crc >> 24) ^ byte) & 0xFF];
+		crc_bytes++;
+	}
+
+    crc ^= 0xFFFFFFFF;  // Final XOR
+    fclose(file);
+	
+    return crc;
+}
+
