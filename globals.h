@@ -1,8 +1,10 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
+#define _GNU_SOURCE
+
 #include <pthread.h>
-#include <signal.h>
+#include <semaphore.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -28,6 +30,7 @@
 #include <dirent.h>
 #include <gpiod.h>
 #include <execinfo.h>
+#include <dirent.h>
 
 
 #define VERSION_STRING "v0.0.4  2025-06-03"
@@ -39,8 +42,10 @@
 #define MOUNT_POINT "/mnt/usb"
 #define USB_CONFIG_FILE "./usb_ports.config"
 #define CRC_FILE "/var/ramdrive/crc.txt"
+#define FFMPEG_FILTERS "agate=mode=downward:ratio=1.2, silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.7, loudnorm=I=-18:TP=-2:LRA=11"
+#define NUMBER_OF_FFMPEG_THREADS 4
 
-
+	
 #define MAX_FILES 1024      // Maximum number of files/directories per directory
 #define COPY_BUFFER_SIZE 65536  // Buffer size for file copying
 #define STRING_LEN 256        // general name string length

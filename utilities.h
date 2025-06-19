@@ -14,8 +14,6 @@ int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *
 
 int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_t *bytes_copied_p, FILE* crc_file);
 
-void usleep(const uint64_t usec);
-
 void print_shared_data(const SharedDataStruct* shared_data_p);
 
 void extract_usb_path(const char *input, char *output);	
