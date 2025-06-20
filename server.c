@@ -10,6 +10,8 @@
 char buffer[STRING_LEN*2];
 SharedDataStruct* shared_data_p = NULL;
 sem_t ffmpeg_sem;
+pthread_mutex_t crc_file_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 
 
 //------------------------------------------------------------------------------------------------
@@ -19,7 +21,6 @@ sem_t ffmpeg_sem;
 //------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------
-
 // Sets the state of a single USB Channel
 void set_state(int device_id, ChannelStateEnum state) {
 	shared_data_p->channel_info[device_id].state = state;
@@ -67,8 +68,7 @@ void* ffmpeg_thread_function(void* arg)
 	strcat(temp_file, ".tmp");
 
 
-	// Use a semaphone to only allow 4 instances of ffmpeg to run at one time (one per cpu core)
-	printf("*******run_ffmpeg(%s) waiting for semaphore\n", mp3_file);
+	// Use a semaphore to only allow 4 instances of ffmpeg to run at one time (one per cpu core)
 	if (sem_wait(&ffmpeg_sem) == -1)
 	{
 		fprintf(stderr, "ERROR: sem_wait failed\n");
@@ -76,8 +76,6 @@ void* ffmpeg_thread_function(void* arg)
 	}
 	
 
-	printf("********Semaphore acquired. run_ffmpeg(%s, %s)\n", mp3_file, temp_file);
-	
 	// run ffmpeg. output in 128K mono
 	snprintf(buffer2, sizeof(buffer2), "ffmpeg -i %s -y -loglevel error -af \"%s\" -f mp3 -ar 44.1K -ab 128k -ac 1 %s", mp3_file, FFMPEG_FILTERS, temp_file);
 	ret = execute_command(-1, buffer2, false);
@@ -238,13 +236,19 @@ void generate_crcs(char* path, FILE *crc_file) {
 				
 				// Write '<filename>[tab]<crc>' to the CRC file
 				uint32_t actual_crc = compute_crc32(subpath);				
-				fprintf(crc_file, "%s\t%08x\n", entry->d_name, actual_crc);
+				
+				pthread_mutex_lock(&crc_file_mutex);
+				const char* ptr = subpath + strlen(RAMDIR_PATH) + 1;  
+				fprintf(crc_file, "%s\t%08x\n", ptr, actual_crc);	
+				fflush(crc_file);
+				pthread_mutex_unlock(&crc_file_mutex);
             }
         }
     }
 
     free(subpath);
     closedir(dir);
+	
 }
 
 
@@ -425,19 +429,6 @@ int load_master() {
 		return 1;
 	}
 
-	snprintf(buffer, sizeof(buffer), "Size = %luMB", shared_data_p->total_size / 1024 / 1024);
-	lcd_display_message("Master loaded OK.", buffer, NULL, "Remove Master USB");
-	set_state(0, READY);
-	beep();
-	
-	// Wait for USB removed
-	printf("Waiting for master USB to be removed\n");
-	while(!usb_device_removed(name, path)) {
-		usleep(50000);
-	}
-	
-	set_state(0, EMPTY);
-	
 	lcd_clear();
 	beep();
 
@@ -670,9 +661,6 @@ int main() {
 	
 	load_master();
 	
-	//map_usb_ports();
-	
-
 	lcd_display_message("Optimising MP3 files", "Please Wait", NULL, NULL);
 	process_all_mp3_files(RAMDIR_PATH);
 
@@ -687,16 +675,19 @@ int main() {
 	}
 
 	generate_crcs(RAMDIR_PATH, crc_file);
+	printf("Generate CRCs finished\n");
 		
     if (fclose(crc_file) == -1) {
         perror("close crc_file");
         exit(1);
     }
 
+	// prompt the user to remove the master USB drive
+	snprintf(buffer, sizeof(buffer), "%luMB Loaded OK.", shared_data_p->total_size / 1024 / 1024);
+	lcd_display_message(buffer, "Remove master.","Insert blanks then","press button to copy");
+	set_state(0, READY);
+	beep();
 
-	// Main program loop
-	lcd_display_message("Ready to copy.", "Insert disks then", "press Red button", "to begin");
-	double_beep();
 	bool starting = true;
 	
 	while(true) {
