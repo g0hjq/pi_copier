@@ -356,19 +356,40 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
     struct stat stat_buf;
 
 
+
     // Copy files first
+	char dest_name[PATH_LEN];
+	
     for (int i = 0; i < count; i++) {
 		
 		if (strlen(src_dir) + strlen(names[i]) + 2 >= PATH_LEN) {
 			fprintf(stderr, "ERROR: src_dir and names[i] is too long\n");			
 		}
 			
+		snprintf(src_path, PATH_LEN, "%s/%s", src_dir, names[i]);
+
 		if (strlen(dest_path) + strlen(names[i]) + 2 >= PATH_LEN) {
 			fprintf(stderr, "ERROR: dest_path and names[i] is too long\n");			
 		}
+		
+
+		// If it's an mp3 file, truncate the name to 64 characters to avoid string overflows
+		size_t len = strlen(names[i]);
+		if (len >= 4 && strcasecmp(&names[i][len - 4], ".mp3") == 0) {
+			if (len > 60) {
+				len = 60;
+			}
 			
-		snprintf(src_path, PATH_LEN, "%s/%s", src_dir, names[i]);
-        snprintf(dest_path, PATH_LEN, "%s/%s", dest_dir, names[i]);
+			strncpy(dest_name, names[i], len-4);
+			dest_name[len-4] = '\0';			
+			strcat(dest_name, ".mp3");
+			snprintf(dest_path, PATH_LEN, "%s/%s", dest_dir, dest_name);
+		}
+		else {
+			snprintf(dest_path, PATH_LEN, "%s/%s", dest_dir, names[i]);
+		}
+ 
+ 
 	
         if (stat(src_path, &stat_buf) < 0) {
             snprintf(error_msg, sizeof(error_msg), "Failed to stat '%s'", src_path);
@@ -389,6 +410,8 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
         }
 		
 	}
+	
+
 	
 
     // Then copy directories
