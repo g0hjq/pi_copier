@@ -340,7 +340,7 @@ void test_leds() {
 	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++) {		
 		set_all_states(EMPTY);		
 		set_state(device_id, LED_TEST);
-		usleep(80000);
+		usleep(100000);
 	}
 
 	printf("LED Test - All Off\n");
@@ -423,6 +423,12 @@ int load_master() {
 	printf("Total Size=%lu\n", shared_data_p->total_size);
 
     // Unmount the USB drive
+	snprintf(buffer, sizeof(buffer), "sync %s", mount_point);
+	if (execute_command(-1, buffer, false) != 0) {
+		fprintf(stderr, "VERIFY ERROR: Cannot sync device\n");
+		return false;
+	}
+	
 	snprintf(buffer, sizeof(buffer), "sudo umount %s", mount_point);
 	if (execute_command(-1, buffer, false) != 0) {
 		fprintf(stderr, "ERROR: Unmounting the USB drive %s\n", mount_point);

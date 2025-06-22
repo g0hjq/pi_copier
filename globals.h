@@ -61,7 +61,8 @@
 #define GPIO_BUTTON1 21   // bottom button
 #define GPIO_DATA 5       // 74HC595 data line
 #define GPIO_CLOCK 6      // 74HC595 clock line
-#define GPIO_LATCH 13     // 74HC595 latch line
+#define GPIO_LATCH0 13     // 74HC595 latch line
+#define GPIO_LATCH1 19     // 74HC595 latch line
 #define GPIO_SPEAKER 18   // speaker
 
 

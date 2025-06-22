@@ -137,6 +137,13 @@ bool verify(char* partition_name, char *mount_point) {
  
 	printf("[%d] Verify complete in %d seconds\n", device_id, seconds);
 
+    // Sync the USB drive
+	snprintf(buffer, sizeof(buffer), "sync %s", mount_point);
+	if (execute_command(device_id, buffer, false) != 0) {
+		fprintf(stderr, "VERIFY ERROR: Cannot sync device\n");
+		return false;
+	}
+
     // Unmount the USB drive
 	snprintf(buffer, sizeof(buffer), "umount %s", mount_point);
 	if (execute_command(device_id, buffer, false) != 0) {
@@ -341,9 +348,15 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
-    // Step 9: Unmount the USB drive
+    // Step 9: Unmount the USB drive		
 	client_info_p->state = UNMOUNTING;
-	//snprintf(buffer, sizeof(buffer), "eject %s 2>/dev/null", mount_point);
+	
+	snprintf(buffer, sizeof(buffer), "sync %s", mount_point);
+	if (execute_command(device_id, buffer, false) != 0) {
+		fprintf(stderr, "VERIFY ERROR: Cannot sync device\n");
+		return false;
+	}
+
 	snprintf(buffer, sizeof(buffer), "umount %s", mount_point);
 	if (execute_command(device_id, buffer, false) != 0) {
 		failed("Unmounting drive");
