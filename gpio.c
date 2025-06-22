@@ -13,7 +13,8 @@ struct gpiod_line *button_line0;
 struct gpiod_line *button_line1;
 struct gpiod_line *clock_line;
 struct gpiod_line *data_line;
-struct gpiod_line *latch_line;
+struct gpiod_line *latch_line0;
+struct gpiod_line *latch_line1;
 struct gpiod_line *speaker_line;
 
 static ButtonStateEnum button_state0;
@@ -148,20 +149,36 @@ static void delay_us(uint32_t us) {
 
 
 static void send_led_data(unsigned char* bits, int bit_count)
-{			
-	// Send the LED data to the shift registers
-	for (int i=bit_count-1; i>=0; i--)
+{		
+
+	// Send the LED data to the bottom set of shift registers
+	for (int i=bit_count-1; i>=bit_count/2; i--)
 	{
 		gpiod_line_set_value(data_line, bits[i] ? 1 : 0);		
 		delay_us(GPIO_DELAY);
 		gpiod_line_set_value(clock_line, 1);
 		delay_us(GPIO_DELAY);
 		gpiod_line_set_value(clock_line, 0);
-	}	
-	gpiod_line_set_value(latch_line, 1);
+	}		
+	gpiod_line_set_value(latch_line1, 1);
 	delay_us(GPIO_DELAY);
-	gpiod_line_set_value(latch_line, 0);
+	gpiod_line_set_value(latch_line1, 0);
 	delay_us(GPIO_DELAY);
+	
+	// Send the LED data to the top set of shift registers
+	for (int i=bit_count/2-1; i>=0; i--)
+	{
+		gpiod_line_set_value(data_line, bits[i] ? 1 : 0);		
+		delay_us(GPIO_DELAY);
+		gpiod_line_set_value(clock_line, 1);
+		delay_us(GPIO_DELAY);
+		gpiod_line_set_value(clock_line, 0);
+	}		
+	gpiod_line_set_value(latch_line0, 1);
+	delay_us(GPIO_DELAY);
+	gpiod_line_set_value(latch_line0, 0);
+	delay_us(GPIO_DELAY);
+
 }
 		
 void wait_for_button_release() {
@@ -452,7 +469,8 @@ void gpio_cleanup(void) {
 	gpiod_line_release(button_line1);
     gpiod_line_release(clock_line);
     gpiod_line_release(data_line);
-    gpiod_line_release(latch_line);
+    gpiod_line_release(latch_line0);
+    gpiod_line_release(latch_line1);
     gpiod_line_release(speaker_line);
     gpiod_chip_close(chip);
 }
@@ -526,9 +544,15 @@ void gpio_init(SharedDataStruct* shared_data_p) {
 		exit(1);
     }
 
-    latch_line = gpiod_chip_get_line(chip, GPIO_LATCH);
-    if (!latch_line) {
-        fprintf(stderr, "ERROR: Failed to get latch GPIO line");
+    latch_line0 = gpiod_chip_get_line(chip, GPIO_LATCH0);
+    if (!latch_line0) {
+        fprintf(stderr, "ERROR: Failed to get latch 0 GPIO line");
+		exit(1);
+    }
+
+    latch_line1 = gpiod_chip_get_line(chip, GPIO_LATCH1);
+    if (!latch_line1) {
+        fprintf(stderr, "ERROR: Failed to get latch 1 GPIO line");
 		exit(1);
     }
 
@@ -560,8 +584,13 @@ void gpio_init(SharedDataStruct* shared_data_p) {
         exit(1);
     }
 
-    if (gpiod_line_request_output(latch_line, CONSUMER, 0) < 0) {
-        fprintf(stderr, "ERROR: Failed to set latch line as output");
+    if (gpiod_line_request_output(latch_line0, CONSUMER, 0) < 0) {
+        fprintf(stderr, "ERROR: Failed to set latch line 0 as output");
+        exit(1);
+    }
+
+    if (gpiod_line_request_output(latch_line1, CONSUMER, 0) < 0) {
+        fprintf(stderr, "ERROR: Failed to set latch line 1 as output");
         exit(1);
     }
 
