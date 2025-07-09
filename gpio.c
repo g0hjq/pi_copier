@@ -252,6 +252,7 @@ void display_system_menu(void) {
 			int value1 = gpiod_line_get_value(button_line1);
 		
 			if (value0==0) {
+				// Next option
 				command_num++;
 				if (command_num >= command_count) {
 					command_num = 0;
@@ -259,61 +260,44 @@ void display_system_menu(void) {
 				wait_for_button_release();
 				done = true;
 			} 
-			else {			
+			else {
+				
 				if (value1==0) {
 					
-					if (command_num == 4) { // cancel
-						lcd_display_message(NULL, "Ready", NULL, NULL);
-						return;
-					}
-					
-					lcd_display_message(system_commands[command_num], "Are you sure?", "TOP to Execute", "BOTTOM to Cancel");
-					wait_for_button_release();
-					
-					
-					while (!done) {
-						value0 = gpiod_line_get_value(button_line0);
-						value1 = gpiod_line_get_value(button_line1);
-						
-						if (value1 == 0) {
+					// Execute					
+					switch (command_num) {
+						case 0: // AP_Mode
+							lcd_display_message(NULL,"Setting up AP Mode","Please Wait",NULL);
+							execute_command(-1, "sudo ./setup_ap.sh", true);
+							get_ip_address(ip_addr, sizeof(ip_addr));
+							lcd_display_message("AP Mode", "SSID: Copier_AP",ip_addr, "Password: LetMeIn123");
 							done = true;
+							break;
+						case 1: // WiFi Mode
+							lcd_display_message(NULL,"Setting up WiFi Mode","Please Wait",NULL);
+							execute_command(-1, "sudo ./disable_ap.sh", true);
+							get_ip_address(ip_addr, sizeof(ip_addr));
+							lcd_display_message("WiFi Mode", ip_addr, "Username : pi", "Password: raspberry");
+							done = true;
+							break;
+						case 2: // Restart
+							lcd_display_message(NULL, "Restarting", "Back soon!", NULL);
+							exit(0);
+							break;
+						case 3: // Shutdown
+							lcd_display_message(NULL, "Shutting down", "Please power down", NULL);									
+							execute_command(-1, "sudo shutdown now", true);					
+							break;
+						case 4: // Cancel
+							lcd_display_message(NULL, "Ready", NULL, NULL);
+							done = true;
+							break;
 						}
-						
-						if (value0 == 0) {
-														
-							switch (command_num) {
-								case 0: // AP_Mode
-									lcd_display_message(NULL,"Setting up AP Mode","Please Wait",NULL);
-									execute_command(-1, "sudo ./setup_ap.sh", true);
-									get_ip_address(ip_addr, sizeof(ip_addr));
-									lcd_display_message("AP Mode", "SSID: Copier_AP",ip_addr, "Password: LetMeIn123");									
-									break;
-								case 1: // WiFi Mode
-									lcd_display_message(NULL,"Setting up WiFi Mode","Please Wait",NULL);
-									execute_command(-1, "sudo ./disable_ap.sh", true);
-									get_ip_address(ip_addr, sizeof(ip_addr));
-									lcd_display_message("WiFi Mode", ip_addr, "Username : pi", "Password: raspberry");									
-									break;
-								case 2: // Restart
-									lcd_display_message(NULL, "Restarting", "Back soon!", NULL);
-									exit(0);
-									break;
-								case 3: // Shutdown
-									lcd_display_message(NULL, "Shutting down", "Please power down", NULL);									
-									execute_command(-1, "sudo shutdown now", true);					
-									break;
-								case 4: // Cancel
-									done = true;
-									break;
-								}
-							
-							return;
-						}	
-						
-						usleep(100000);
-					}
-				}
+					
+					return;
+				}	
 				
+				usleep(100000);
 			}
 			usleep(100000);			
 		}	
@@ -406,8 +390,7 @@ void* gpio_thread_function(void* arg) {
 		
         prev_value1 = value1;		
 		
-		
-		
+				
 		// Shutdown (or restart if systemd is configured for that) when both buttons are held down
 		if (((button_state0 == BUTTON_LONG_PRESS) && (button_state1 != BUTTON_NOT_PRESSED)) ||
 		    ((button_state1 == BUTTON_LONG_PRESS) && (button_state0 != BUTTON_NOT_PRESSED))) {

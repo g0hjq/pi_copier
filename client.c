@@ -364,19 +364,20 @@ int main(int argc, char *argv[]) {
 
 // Step 10: Verify all files have been written (Optional)
 #if VERIFY
-	if (!client_info_p->halt)
-	{
+	if (!client_info_p->halt) {
 		client_info_p->state = VERIFYING;
-		bool success = verify(partition_name, mount_point);
-		if (success) {
+		bool crc_ok = verify(partition_name, mount_point);
+		if (crc_ok) {
 			client_info_p->state = client_info_p->halt ? FAILED : SUCCESS;	
 		}
-		else
-		{
+		else {
 			client_info_p->state = CRC_FAILED;
 		}		
 	}
-#else		
+	else {
+		client_info_p->state  = FAILED;
+	}
+#else
 	client_info_p->state = client_info_p->halt ? FAILED : SUCCESS;
 #endif
 
