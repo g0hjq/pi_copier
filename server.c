@@ -498,6 +498,7 @@ void terminate(int hub_number) {
 		ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];
 		if (channel_info_p->hub_number == hub_number)
 		{
+			printf("....Halting Channel %d\n", channel_info_p->port_number);
 			channel_info_p->halt = true;
 		}
 	}
@@ -672,7 +673,7 @@ int main() {
 
 	lcd_display_message("Calculating", "Checksums", NULL, NULL);
 	
-	// Copy the master files to the ramdrive and save the CRCs for each to crc.txt on the ramdrive
+	// Save the CRCs for each file (including in subdirectories) to file crc.txt on the ramdrive
 	initialise_crc_table();
 	FILE *crc_file = fopen(CRC_FILE, "w");
 	if (!crc_file) {
