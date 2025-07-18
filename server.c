@@ -5,8 +5,6 @@
 #include "gpio.h"
 #include "usb.h"
 
-
-
 char buffer[STRING_LEN*2];
 SharedDataStruct* shared_data_p = NULL;
 sem_t ffmpeg_sem;
