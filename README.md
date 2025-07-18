@@ -100,7 +100,7 @@ username: pi  password: raspberry
     tmpfs /var/ramdrive tmpfs nodev,nosuid,size=2G 0 0 
 
  sudo mount -a
- systemctl daemon-reload
+ sudo systemctl daemon-reload
 ``` 
 
 #### To set a fixed IP Address for wifi
