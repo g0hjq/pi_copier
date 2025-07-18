@@ -121,7 +121,7 @@ Password = raspberry
 ```
 sudo raspi-config
   (8 Update)
-  (3 Interface options) -> (I4 I2C) -> YES
+  (3 Interface options) -> (I5 I2C) -> YES
 ```  
   
 #### Install Libraries
