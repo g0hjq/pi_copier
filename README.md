@@ -69,7 +69,7 @@ All the below files are in /home/pi/copier
 | makefile         | Used by the build process                         |
 | usb_ports.config | This is used by the port mapping, and MAY need to be updated if you change the USB hubs |
 | setup_ap.sh      | Sets the Raspberry Pi WiFi into Access Point mode to allow direct access from a laptop without connecting via a WiFi hub |
-| disable_ap.sh      | Sets the Raspberry Pi into normal WiFi mode for connections via a WiFi hub |
+| disable_ap.sh    | Sets the Raspberry Pi into normal WiFi mode for connections via a WiFi hub |
 
 
 Compiling the program
@@ -130,30 +130,6 @@ sudo apt install libudev-dev
 sudo apt install libgpiod-dev
 ```
 
-##### Setting up AP Mode
-See enable_ap.sh. 
-
-**Dont forget to change 'my-password'**
-```
-nmcli con add type wifi ifname wlan0 mode ap con-name Copier_AP ssid Copier_AP autoconnect yes
-nmcli con modify Copier_AP 802-11-wireless.band bg
-nmcli con modify Copier_AP 802-11-wireless.channel 7
-nmcli con modify Copier_AP wifi-sec.key-mgmt wpa-psk
-nmcli con modify Copier_AP wifi-sec.psk "my-password"
-nmcli con modify Copier_AP ipv4.method shared ipv4.address 192.168.4.1/24
-nmcli con modify Copier_AP ipv6.method disabled
-nmcli con up Copier_AP
-```
-
-#### Enable Overlay mode and set boot partition to READ-ONLY
-```
-sudo raspi-config
-  (4 Performance Options)
-  (P2 Overlay File System Enable/disable read-only file system)
-     <YES>
-Then boot partition to read-only
-Reboot
-```
 
 #### Auto Start
 
@@ -227,10 +203,33 @@ Reboot
 | Red+Amber+Green Flash | Insert Master USB here                         |
 
 ## Wifi Connections
+See enable_wifi.sh. 
 
-AP Mode
+##### Setting up AP Mode
+See enable_ap.sh. 
 
-Wifi Mode
+**Dont forget to change 'my-password'**
+```
+nmcli con add type wifi ifname wlan0 mode ap con-name Copier_AP ssid Copier_AP autoconnect yes
+nmcli con modify Copier_AP 802-11-wireless.band bg
+nmcli con modify Copier_AP 802-11-wireless.channel 7
+nmcli con modify Copier_AP wifi-sec.key-mgmt wpa-psk
+nmcli con modify Copier_AP wifi-sec.psk "my-password"
+nmcli con modify Copier_AP ipv4.method shared ipv4.address 192.168.4.1/24
+nmcli con modify Copier_AP ipv6.method disabled
+nmcli con up Copier_AP
+```
 
 
+#### Enable Overlay mode and set boot partition to READ-ONLY
 
+**Do this last, as any changes you make after this point will be lost when you reboot!**
+
+```
+sudo raspi-config
+  (4 Performance Options)
+  (P2 Overlay File System Enable/disable read-only file system)
+     <YES>
+Then boot partition to read-only
+Reboot
+```
