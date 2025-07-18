@@ -270,7 +270,7 @@ void display_system_menu(void) {
 							lcd_display_message(NULL,"Setting up AP Mode","Please Wait",NULL);
 							execute_command(-1, "sudo ./setup_ap.sh", true);
 							get_ip_address(ip_addr, sizeof(ip_addr));
-							lcd_display_message("AP Mode", "SSID: Copier_AP",ip_addr, "Password: LetMeIn123");
+							lcd_display_message("AP Mode", "SSID: Copier2_AP", ip_addr, "Password: LetMeIn123");
 							done = true;
 							break;
 						case 1: // WiFi Mode
