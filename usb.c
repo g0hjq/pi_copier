@@ -71,7 +71,7 @@ bool device_is_loaded(char* device_name) {
     return found;
 }
 	
-
+/*
 void assign_device_paths_for_hub(int hub_number, char* clue)
 {
 	char line[STRING_LEN];
@@ -129,7 +129,7 @@ void assign_device_paths_for_hub(int hub_number, char* clue)
 	
 	fclose(f);
 }
-
+*/
 
 
 // Returns -1 if the path is invalid
@@ -147,7 +147,7 @@ int get_device_id_from_path(const SharedDataStruct* shared_data_p, char* path)
 	}
 	
 	// None found. Find the first usb hub which has not had it's usb paths setup yet
-	for (int hub=0; hub<NUMBER_OF_HUBS; hub++)
+	/* for (int hub=0; hub<NUMBER_OF_HUBS; hub++)
 	{
 		int device_id = get_device_id_from_hub_and_port_number(shared_data_p, hub, 0);
 		const ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];
@@ -168,8 +168,9 @@ int get_device_id_from_path(const SharedDataStruct* shared_data_p, char* path)
 			return device_id;
 		}		
 	}
+	*/
 	
-	fprintf(stderr, "ERROR: get_device_id_from_path failed. Path=%s\n", path);
+	//fprintf(stderr, "get_device_id_from_path: path not found. Path=%s\n", path);
 	return -1;
 }
 
@@ -259,8 +260,8 @@ void *monitor_usb_drives_thread_function(void* arg) {
 							//printf("buff=%s, device_id=%d\n", buff, device_id);
 						}
 						
-						//printf("Action:%s id_bus=%s devtype:%s path:%s devnode:%s subsystem:%s syspath:%s\n", 
-						//		action, id_bus, devtype, buff, devnode, subsystem, syspath);
+						printf("Action:%s id_bus=%s devtype:%s path:%s devnode:%s subsystem:%s syspath:%s deviceid:%d\n", 
+								action, id_bus, devtype, buff, devnode, subsystem, syspath, device_id);
 						
 						if (strcmp(action, "add") == 0) {
 							

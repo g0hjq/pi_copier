@@ -128,6 +128,7 @@ sudo raspi-config
 ```
 sudo apt install libudev-dev
 sudo apt install libgpiod-dev
+sudo apt install ffmpeg
 ```
 
 

@@ -324,21 +324,21 @@ void test_leds() {
 
 	printf("LED Test - All Red\n");
 	set_all_states(FAILED);
-	usleep(100000);
+	usleep(400000);
 
 	printf("LED Test - All Yellow\n");
 	set_all_states(READY);
-	usleep(100000);
+	usleep(400000);
 
 	printf("LED Test - All Green\n");
 	set_all_states(SUCCESS);
-	usleep(100000);
+	usleep(400000);
 
 	printf("LED Test - Left to Right\n");
 	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++) {		
 		set_all_states(EMPTY);		
 		set_state(device_id, LED_TEST);
-		usleep(100000);
+		usleep(200000);
 	}
 
 	printf("LED Test - All Off\n");
@@ -433,12 +433,73 @@ int load_master() {
 		return 1;
 	}
 
-	lcd_clear();
-	beep();
 
 	return 0;
 }
 
+
+// Map USB port numbers
+//
+// Prompts the user to insert a usb drive in each port in turn to obtain
+// the path of each USB port so we can associate the hub's port paths with 
+// the usb port number to enable us to light the correct LEDs
+void map_usb_port_numbers(void)
+{	
+	int channel_number = 0;
+	char name[STRING_LEN];
+	char path[STRING_LEN];
+	
+	bool done = false;
+	
+	while ((channel_number < MAX_USB_CHANNELS) && !done)
+	{
+		ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[channel_number];
+		channel_info_p->state = INDICATING;
+		
+		lcd_clear();
+		beep();
+		
+		if (channel_number == 0)
+			lcd_write_string("Insert first device", 0);
+		else
+			lcd_write_string("Insert next device", 0);
+		
+		sprintf(buffer, "in socket %d", channel_number+1);
+		lcd_write_string(buffer, 1);
+		lcd_write_string("(Top Button to skip)", 3);
+		
+		
+		while (!done) {
+			
+			if (get_button_state0() == BUTTON_SHORT_PRESS) {
+				//done = true;
+				channel_info_p->state = EMPTY;
+				channel_number++;
+				break;
+			}
+
+			if (usb_device_inserted(name, path)) {
+				printf("found usb device %d : name=%s path=%s\n", channel_number, name, path);
+
+				// error if the channel has already been mapped
+				if (get_device_id_from_path(shared_data_p, path) >= 0) { 
+					lcd_display_error_message("SOCKET IS ALREADY", "ASSIGNED");
+				}
+				else {
+					strcpy(channel_info_p->device_name, name);
+					strcpy(channel_info_p->device_path, path);
+					channel_info_p->state = READY;
+					channel_number++;
+				}
+				break;
+			}			
+			
+			usleep(50000);
+		}		
+	}	
+
+	lcd_clear();	
+}
 
 
 //------------------------------------------------------------------------------------------------
@@ -540,7 +601,7 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 			else if (state == SUCCESS) { 
 				pass++; 
 			}
-			else if (state == FAILED) { 
+			else if ((state == FAILED) || (state == CRC_FAILED)) { 
 				fail++; 
 			}
 		}
@@ -687,20 +748,36 @@ int main() {
         exit(1);
     }
 
-	// prompt the user to remove the master USB drive
-	snprintf(buffer, sizeof(buffer), "%luMB Loaded OK.", shared_data_p->total_size / 1024 / 1024);
-	lcd_display_message(buffer, "Remove master.","Insert blanks then","press button to copy");
+	snprintf(buffer, sizeof(buffer), "Size = %luMB", shared_data_p->total_size / 1024 / 1024);
+	lcd_display_message("Master loaded OK.", buffer, NULL, "Remove Master USB");
 	set_state(0, READY);
 	beep();
-
-	bool starting = true;
 	
+	// Wait for USB removed
+	printf("Waiting for master USB to be removed\n");
+	while(!usb_device_removed(NULL, NULL)) {
+		usleep(100000);
+	}
+	
+	lcd_clear();
+	beep();
+
+	
+	// Ask the user to load a blank usb stick into each slot in turn
+	// so we can work out the channel number (and hence LEDs) to associate with each USB slot
+	map_usb_port_numbers();
+
+	get_button_state0();
+	get_button_state1();
+	lcd_display_message(NULL, "Ready", "Press button to start", NULL);
+	
+	bool starting = true;
 	while(true) {
 		
 		ButtonStateEnum button_state0 = get_button_state0();
 		ButtonStateEnum button_state1 = get_button_state1();
 
-		if (starting && ((button_state0 != BUTTON_NOT_PRESSED) || (button_state0 != BUTTON_NOT_PRESSED)))
+		if (starting)
 		{
 			lcd_clear();
 			starting = false;
