@@ -466,12 +466,12 @@ void map_usb_port_numbers(void)
 		
 		sprintf(buffer, "in socket %d", channel_number+1);
 		lcd_write_string(buffer, 1);
-		lcd_write_string("(Top Button to skip)", 3);
+		lcd_write_string("Push button to skip", 3);
 		
 		
 		while (!done) {
 			
-			if (get_button_state0() == BUTTON_SHORT_PRESS) {
+			if ((get_button_state0() == BUTTON_SHORT_PRESS) || (get_button_state1() == BUTTON_SHORT_PRESS)) {
 				//done = true;
 				channel_info_p->state = EMPTY;
 				channel_number++;
@@ -647,7 +647,13 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 				snprintf(buffer, sizeof(buffer), "Wrote %luMB in %1u:%02u", total_bytes_copied/1024/1024, seconds/60, seconds%60);
 				lcd_write_string(buffer, lcd_line + 1);
 
-				beep();
+				if (fail > 0) {
+					error_beep();
+				}
+				else {
+					beep();
+				}
+				
 				channel_busy[hub_number] = false;
 			}
 		}
@@ -769,7 +775,8 @@ int main() {
 
 	get_button_state0();
 	get_button_state1();
-	lcd_display_message(NULL, "Ready", "Press button to start", NULL);
+	
+	lcd_display_message("READY", NULL, "Push button to start", NULL);
 	
 	bool starting = true;
 	while(true) {
@@ -777,7 +784,7 @@ int main() {
 		ButtonStateEnum button_state0 = get_button_state0();
 		ButtonStateEnum button_state1 = get_button_state1();
 
-		if (starting)
+		if (starting && ((button_state0 != BUTTON_NOT_PRESSED) || (button_state1 != BUTTON_NOT_PRESSED)))
 		{
 			lcd_clear();
 			starting = false;
