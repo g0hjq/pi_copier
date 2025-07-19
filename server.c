@@ -448,8 +448,10 @@ void map_usb_port_numbers(void)
 	int channel_number = 0;
 	char name[STRING_LEN];
 	char path[STRING_LEN];
+	char message[STRING_LEN+20];
 	
 	bool done = false;
+	strcpy(message, "Push Button to skip");
 	
 	while ((channel_number < MAX_USB_CHANNELS) && !done)
 	{
@@ -459,14 +461,11 @@ void map_usb_port_numbers(void)
 		lcd_clear();
 		beep();
 		
-		if (channel_number == 0)
-			lcd_write_string("Insert first device", 0);
-		else
-			lcd_write_string("Insert next device", 0);
-		
 		sprintf(buffer, "in socket %d", channel_number+1);
-		lcd_write_string(buffer, 1);
-		lcd_write_string("Push button to skip", 3);
+		lcd_display_message( (channel_number == 0)?"Insert first device":"Insert next device",
+					buffer,
+					NULL,
+					message);
 		
 		
 		while (!done) {
@@ -481,11 +480,14 @@ void map_usb_port_numbers(void)
 			if (usb_device_inserted(name, path)) {
 				printf("found usb device %d : name=%s path=%s\n", channel_number, name, path);
 
+
 				// error if the channel has already been mapped
 				if (get_device_id_from_path(shared_data_p, path) >= 0) { 
 					lcd_display_error_message("SOCKET IS ALREADY", "ASSIGNED");
 				}
 				else {
+					sprintf(message, "[Port %d=%s]", channel_number+1, path);
+
 					strcpy(channel_info_p->device_name, name);
 					strcpy(channel_info_p->device_path, path);
 					channel_info_p->state = READY;
@@ -534,7 +536,8 @@ int run(int hub_number) {
 						
 			if ((channel_info_p->state == READY) || 
 			    (channel_info_p->state == SUCCESS) || 
-				(channel_info_p->state == FAILED) ) {
+				(channel_info_p->state == FAILED) || 
+				(channel_info_p->state == CRC_FAILED)) {
 					
 				int pid = start_process(device_id);					
 				if (pid < 0) {

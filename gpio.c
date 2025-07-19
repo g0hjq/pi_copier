@@ -61,10 +61,10 @@ void double_beep() {
 
 
 void error_beep() {
-	for (int i=0; i<10; i++)
+	for (int i=0; i<25; i++)
 	{
-		tone(800, 40);
-		tone(900, 40);
+		tone(300, 20);
+		tone(320, 20);
 	}
 }
 
