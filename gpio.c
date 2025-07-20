@@ -233,7 +233,7 @@ void get_ip_address(char* ip_addr, int addr_len) {
 	
 		
 // Both buttons held. Display System menu
-const char *system_commands[] = {"[AP Mode]", "[WiFi Mode]", "[Restart]", "[Shutdown]", "[Cancel]"};
+const char *system_commands[] = {"[Restart]", "[Shutdown]", "[AP Mode]", "[WiFi Mode]", "[Cancel]"};
 const int command_count = sizeof(system_commands) / sizeof(char*);
 
 void display_system_menu(void) {
@@ -266,27 +266,27 @@ void display_system_menu(void) {
 					
 					// Execute					
 					switch (command_num) {
-						case 0: // AP_Mode
+						case 0: // Restart
+							lcd_display_message(NULL, "Restarting", "Back soon!", NULL);
+							exit(0);
+							break;
+						case 1: // Shutdown
+							lcd_display_message(NULL, "Shutting down", "Please power down", NULL);									
+							execute_command(-1, "sudo shutdown now", true);					
+							break;
+						case 2: // AP_Mode
 							lcd_display_message(NULL,"Setting up AP Mode","Please Wait",NULL);
 							execute_command(-1, "sudo ./setup_ap.sh", true);
 							get_ip_address(ip_addr, sizeof(ip_addr));
 							lcd_display_message("AP Mode", "SSID: Copier2_AP", ip_addr, "Password: LetMeIn123");
 							done = true;
 							break;
-						case 1: // WiFi Mode
+						case 3: // WiFi Mode
 							lcd_display_message(NULL,"Setting up WiFi Mode","Please Wait",NULL);
 							execute_command(-1, "sudo ./disable_ap.sh", true);
 							get_ip_address(ip_addr, sizeof(ip_addr));
 							lcd_display_message("WiFi Mode", ip_addr, "Username : pi", "Password: raspberry");
 							done = true;
-							break;
-						case 2: // Restart
-							lcd_display_message(NULL, "Restarting", "Back soon!", NULL);
-							exit(0);
-							break;
-						case 3: // Shutdown
-							lcd_display_message(NULL, "Shutting down", "Please power down", NULL);									
-							execute_command(-1, "sudo shutdown now", true);					
 							break;
 						case 4: // Cancel
 							lcd_display_message(NULL, "Ready", NULL, NULL);
