@@ -33,7 +33,7 @@
 #include <dirent.h>
 
 
-#define VERSION_STRING "v1.0.0  2025-07-19"
+#define VERSION_STRING "v1.0.1 " __DATE__
 #define VERIFY true
 #define CRC_SIZE 1*1024*1024   // CRCs will only be generated and checked for the first 1MB in each file
 
