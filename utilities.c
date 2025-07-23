@@ -268,6 +268,47 @@ int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *
 }
 
 
+// Remove odd characters such as "?" from the filename as these cause errors if written to a FAT32 usb drive
+void sanitize_filename(char *filename) {
+    for (int i = 0; filename[i]; i++) {
+        if (filename[i] == '?' || filename[i] == '*' || filename[i] == '/' || filename[i] == '\\' || filename[i] < 32) {
+            filename[i] = '_'; // Replace invalid characters with underscore
+        }
+    }
+}
+
+
+void shorten_filename(char *filename, size_t max_len) {
+    if (!filename || max_len == 0) return;
+
+    size_t len = strlen(filename);
+    if (len <= max_len) return; // No need to shorten
+
+    // Find the last '.' to identify the extension
+    char *ext = strrchr(filename, '.');
+    if (ext == NULL || ext == filename || *(ext + 1) == '\0') {
+        // No extension or dot at start/empty extension, truncate to max_len
+        if (len > max_len) {
+            filename[max_len] = '\0';
+        }
+        return;
+    }
+
+    size_t ext_len = len - (ext - filename); // Includes the dot
+
+    if (ext_len >= max_len) {
+        // Extension alone is too long, truncate to max_len
+        filename[max_len] = '\0';
+        return;
+    }
+
+    // Shorten base name to fit within max_len
+    size_t new_base_len = max_len - ext_len;
+    memmove(filename + new_base_len, ext, ext_len + 1); // Move extension
+    filename[new_base_len] = '\0'; // Null-terminate after base name
+}
+
+
 
 /**
  * Function to recursively copy a directory and return total file size
@@ -371,24 +412,16 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 		if (strlen(dest_path) + strlen(names[i]) + 2 >= PATH_LEN) {
 			fprintf(stderr, "ERROR: dest_path and names[i] is too long\n");			
 		}
-		
+
+		// Remove any invalid characters such as "?" and "*" as these cause errors 
+		// if written to a FAT32 flash drive
+		strcpy(dest_name, names[i]);
+		sanitize_filename(dest_name);
 
 		// If it's an mp3 file, truncate the name to 64 characters to avoid string overflows
-		size_t len = strlen(names[i]);
-		if (len >= 4 && strcasecmp(&names[i][len - 4], ".mp3") == 0) {
-			if (len > 60) {
-				len = 60;
-			}
-			
-			strncpy(dest_name, names[i], len-4);
-			dest_name[len-4] = '\0';			
-			strcat(dest_name, ".mp3");
-			snprintf(dest_path, PATH_LEN, "%s/%s", dest_dir, dest_name);
-		}
-		else {
-			snprintf(dest_path, PATH_LEN, "%s/%s", dest_dir, names[i]);
-		}
- 
+		shorten_filename(dest_name, 64);
+		
+		snprintf(dest_path, PATH_LEN, "%s/%s", dest_dir, dest_name);
  
 	
         if (stat(src_path, &stat_buf) < 0) {

@@ -624,7 +624,7 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 			if (copying > 0) {
 			    // copying. Display progress so far
 				float percent;
-				int count = copying + pass + fail;
+				int count = copying + verifying + pass + fail;
 				if ((count == 0) || (shared_data_p->total_size==0))
 					percent = 0;
 				else
@@ -774,11 +774,13 @@ int main() {
 	
 	// Ask the user to load a blank usb stick into each slot in turn
 	// so we can work out the channel number (and hence LEDs) to associate with each USB slot
+	get_button_state0();
+	get_button_state1();
 	map_usb_port_numbers();
-
 	get_button_state0();
 	get_button_state1();
 	
+	beep();
 	lcd_display_message("READY", NULL, "Push button to start", NULL);
 	
 	bool starting = true;
