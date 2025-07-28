@@ -1,4 +1,3 @@
-
 #include "globals.h"
 #include "utilities.h"
 #include "lcd.h"
@@ -48,6 +47,9 @@ void set_all_states(ChannelStateEnum state) {
 //ffmpeg -i MAY29006.mp3 -af 
 // "agate=mode=downward:ratio=1.2, silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.7, loudnorm=I=-18:TP=-2:LRA=11" 
 // -ar 44.1k -ab 128k -ac 1 output06.mp3
+int ffmpeg_complete_count = 0;
+int ffmpeg_file_count = 0;
+
 void* ffmpeg_thread_function(void* arg)
 {
 	char mp3_file[STRING_LEN];
@@ -84,6 +86,9 @@ void* ffmpeg_thread_function(void* arg)
 	}
 		
 	printf("*******run_ffmpeg(%s) ....FINISHED\n", mp3_file);
+	ffmpeg_complete_count++;	
+	int percent_complete = (ffmpeg_complete_count*100) / ffmpeg_file_count;
+	lcd_display_bargraph(percent_complete, 3);
 	
 	if (ret != 0) {
 		fprintf(stderr, "ERROR running ffmpeg\n");
@@ -121,7 +126,7 @@ int process_all_mp3_files(const char *dir_path) {
 	pthread_t threads[MAX_FILES];
 	char* filenames[MAX_FILES];
 	
-	int filename_count = 0;
+	ffmpeg_file_count = 0;
 	
     // Initialize the unnamed semaphore with value 4
     if (sem_init(&ffmpeg_sem, 0, NUMBER_OF_FFMPEG_THREADS) == -1) {
@@ -143,14 +148,14 @@ int process_all_mp3_files(const char *dir_path) {
     while ((entry = readdir(dir))) {			
         if (entry->d_type != DT_DIR && is_mp3(entry->d_name)) {				
             snprintf(mp3_file, sizeof(mp3_file), "%s/%s", dir_path, entry->d_name);
-			filenames[filename_count] = strdup(mp3_file);
-			filename_count++;
+			filenames[ffmpeg_file_count] = strdup(mp3_file);
+			ffmpeg_file_count++;
 		}
 	}
 		
 		
     // Create a new thread for each file
-    for (int i = 0; i < filename_count; i++) {
+    for (int i = 0; i < ffmpeg_file_count; i++) {
 		if (pthread_create(&threads[i], NULL, ffmpeg_thread_function, (void*)filenames[i]) != 0) {
 			perror("pthread_create failed");
 			sem_destroy(&ffmpeg_sem);
@@ -160,10 +165,8 @@ int process_all_mp3_files(const char *dir_path) {
     }
 
 
-    // Wait for all threads to complete. Update the LCD bargraph as it goes
-    for (int i = 0; i < filename_count; i++) {
-		int percent_complete = (i*100) / filename_count;
-		lcd_display_bargraph(percent_complete, 3);
+    // Wait for all threads to complete
+    for (int i = 0; i < ffmpeg_file_count; i++) {
         if (pthread_join(threads[i], NULL) != 0) {
             perror("pthread_join failed");
         }
@@ -171,7 +174,7 @@ int process_all_mp3_files(const char *dir_path) {
 
 
 	// Free allocated strings
-	for (int i = 0; i < filename_count; i++) {
+	for (int i = 0; i < ffmpeg_file_count; i++) {
 		free(filenames[i]); 
     }
 	
@@ -474,6 +477,7 @@ void map_usb_port_numbers(void)
 				//done = true;
 				channel_info_p->state = EMPTY;
 				channel_number++;
+				usleep(500000);
 				break;
 			}
 
@@ -493,6 +497,8 @@ void map_usb_port_numbers(void)
 					channel_info_p->state = READY;
 					channel_number++;
 				}
+				
+				usleep(200000);
 				break;
 			}			
 			
@@ -674,8 +680,9 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 			run(hub_number);
 		}
 	}
-	
 }
+
+
 //------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------
@@ -684,9 +691,8 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 //------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------
 
-
 int main() {
-	
+
     // Create shared memory object
     int shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
     if (shm_fd == -1) {
@@ -735,8 +741,9 @@ int main() {
 	test_leds();
 	
 	load_master();
-	
-	lcd_display_message("Optimising MP3 files", "Please Wait", NULL, NULL);
+
+	snprintf(buffer, sizeof(buffer), "Read %luMB", shared_data_p->total_size / 1024 / 1024);
+	lcd_display_message(buffer, NULL, "Optimising MP3 files", "Please Wait");
 	process_all_mp3_files(RAMDIR_PATH);
 
 	lcd_display_message("Calculating", "Checksums", NULL, NULL);
@@ -757,8 +764,7 @@ int main() {
         exit(1);
     }
 
-	snprintf(buffer, sizeof(buffer), "Size = %luMB", shared_data_p->total_size / 1024 / 1024);
-	lcd_display_message("Master loaded OK.", buffer, NULL, "Remove Master USB");
+	lcd_display_message(NULL, "Please", "Remove Master USB", NULL);
 	set_state(0, READY);
 	beep();
 	

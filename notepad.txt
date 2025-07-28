@@ -1,0 +1,398 @@
+Saving changes to github
+------------------------
+git add *.c
+git commit -m "Did stuff"
+git push origin main
+
+
+
+
+LCD Wiring
+----------
+GND  : Black	  Pin 6
++3V3 : Yellow 	  Pin 1
++5V  : White	  Pin 2
+SDA  : Blue		  Pin 3
+SCL  : Green	  Pin 5
+
+
+LCD Backpack 
+------------
+HLF8574T  (PCF8574) Remote 8-bit io expander for I2C bus/usb/001/020
+
+Use sudo raspi-config and enable Interfacing Options > I2C
+
+sudo apt install -y i2c-tools
+
+sudo apt install -y pigpio libpigpio-dev
+
+sudo i2cdetect -y 1 
+... Address is 27
+
+ 
+
+LED Board Wiring
+----------------
++3V3     : Red		+3V3	Pin 17
+Data     : Orange  	GPIO 5	Pin 29
+Clock    : Yellow 	GPIO 6	Pin 31
+Latch    : Green	GPIO 13 Pin 33
+Ground   : Blue		0V		Pin 39
+Button 1 : Purple	GPIO 20 Pin 38 
+Button 2 : Purple	GPIO 21 Pin 40
+
+
+
+
+Raspberry Pi Configuration
+--------------------------
+
+SSH to: 192.168.0.244  or raspberrypi.local
+Or in AP Mode: 192.168.4.1
+
+
+username: pi  password: raspberry
+
+Setting up a RAM drive on Raspberry Pi
+---------------------------------------
+ sudo mkdir /var/ramdrive 
+ sudo nano /etc/fstab
+   and add the line
+    tmpfs /var/ramdrive tmpfs nodev,nosuid,size=2G 0 0 
+
+ sudo mount -a
+ systemctl daemon-reload
+ 
+To check if your operation succeeded issue 'df' which should report 
+(among the other disks) a tmpfs with 1024 1K blocks (=1MB) as /var/master
+
+
+
+To set fixed IP Address for wifi
+----------------------------------
+
+sudo nmcli con mod preconfigured ipv4.addresses 192.168.0.244/23
+sudo nmcli con mod preconfigured ipv4.gateway 192.168.0.1
+sudo nmcli con mod preconfigured ipv4.dns "192.168.0.1 8.8.8.8"
+sudo nmcli con mod preconfigured ipv4.method manual
+
+
+
+
+
+To see what USB drives are present
+-----------------------------------
+lsblk
+
+sudo fdisk -l
+
+ls /dev/disk/by-id/
+
+lsusb
+
+
+To mount a USB drive
+----------------------
+sudo mkdir /mnt/usbdrive
+sudo chown pi:pi /mnt/usbdrive
+sudo chmod 777 /mnt/usbdrive
+then
+
+sudo mount -o uid=pi,gid=pi /dev/sdb1 /mnt/usbdrive
+
+to unmount:
+sudo umount /mnt/usbdrive
+
+
+Setting up Samba file sharing
+-----------------------------
+
+See https://pimylifeup.com/raspberry-pi-samba/
+
+Username = pi
+Password = raspberry
+
+
+Enabling I2C for the LCD
+------------------------
+sudo raspi-config
+  (8 Update)
+  (3 Interface options) -> (I4 I2C) -> YES
+  
+  
+  
+Install Libraries
+-----------------
+sudo apt install libudev-dev
+sudo apt install libgpiod-dev
+sudo apt install libavcodec-dev libavfilter-dev libavformat-dev
+sudo apt install ffmpeg
+
+
+
+Get USB Info from CLI
+---------------------
+
+lsusb      (list devices)
+lsusb -t   (list as tree)
+lsusb -D /dev/bus/usb/001/020   (show device info)
+
+
+
+Setting up AP Mode
+------------------
+
+nmcli con add type wifi ifname wlan0 mode ap con-name Copier_AP ssid Copier_AP autoconnect yes
+nmcli con modify Copier_AP 802-11-wireless.band bg
+nmcli con modify Copier_AP 802-11-wireless.channel 7
+nmcli con modify Copier_AP wifi-sec.key-mgmt wpa-psk
+nmcli con modify Copier_AP wifi-sec.psk "my-password"
+nmcli con modify Copier_AP ipv4.method shared ipv4.address 192.168.4.1/24
+nmcli con modify Copier_AP ipv6.method disabled
+nmcli con up Copier_AP
+
+
+
+
+
+
+Autostart
+---------
+1. Create a systemd Service File
+
+	sudo nano /etc/systemd/system/usbcopier.service
+
+	Add the following configuration to the file:
+
+		[Unit]
+		Description=Usb Copier Auto-Start Service
+		After=network.target
+
+		[Service]
+		ExecStart=/home/pi/copier/server
+		WorkingDirectory=/home/pi/copier
+		Restart=always
+		RestartSec=5
+		User=pi
+		Group=pi
+		StandardOutput=append:/var/log/usbcopier.log
+		StandardError=append:/var/log/usbcopier.log
+		Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+		[Install]
+		WantedBy=multi-user.target
+
+
+2. Create and set permissions for the log file:
+
+	chmod +x /home/pi/copier/server
+	sudo touch /var/log/usbcopier.log
+	sudo chmod 664 /var/log/usbcopier.log
+	sudo chown pi:pi /var/log/usbcopier.log
+	
+	
+3. Enable and Start the Service
+	Reload systemd to recognize the new service file:
+		sudo systemctl daemon-reload
+
+	Enable the service to start on boot:
+		sudo systemctl enable usbcopier.service
+		sudo systemctl disable usbcopier.service
+
+	Start the service usbcopier to test:
+		sudo systemctl start usbcopier.service
+		sudo systemctl stop usbcopier.service
+
+4. Verify the Service
+	sudo systemctl status usbcopier.service
+
+5. Verify logs
+	cat /var/log/usbcopier.log
+
+
+
+GITHUB
+-------
+
+To add changes to github ...
+
+git add ......
+git commit -a -m "Add systemd service for auto-starting server with restart on crash"
+git push origin main
+
+
+
+
+
+/*
+// Prompts the user to insert a usb drive in each port in turn to obtain
+// the path of each USB port so we can associate the hub's port paths with 
+// the usb port number to enable us to light the correct LEDs
+void map_usb_ports(void) {
+
+	char name[STRING_LEN];
+	char path[STRING_LEN];
+	char line4[STRING_LEN];
+	
+	// Clear any old states
+	get_button_state0();
+	get_button_state1();
+	usb_device_inserted(NULL, NULL);
+	strcpy(line4, "Press Button to skip");
+	
+	for (int device_id=0; device_id< MAX_USB_CHANNELS; device_id++)
+	{		
+		ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];
+		channel_info_p->state = INDICATING;
+			
+		sprintf(buffer, "Put disk in slot %u", device_id+1);
+		lcd_display_message("Testing USB Ports", buffer, NULL, line4);
+		
+		while(true) {
+				
+			if (usb_device_inserted(name, path)) {
+				printf("found usb device %d : name=%s path=%s\n", device_id, name, path);
+								
+				// error if the channel has already been mapped
+				if (get_device_id_from_path(shared_data_p, path) >= 0) { 
+					error_beep();
+					strcpy(line4, "ERROR: SOCKET IN USE");
+				}
+				else {
+					beep();
+					strcpy(channel_info_p->device_name, name);
+					strcpy(channel_info_p->device_path, path);
+					channel_info_p->state = SUCCESS;
+					strcpy(line4, name);
+					strcat(line4, " ");
+					strcat(line4, path);
+				}
+				break;
+			}			
+			
+			if ((get_button_state0() == BUTTON_SHORT_PRESS) || (get_button_state1() == BUTTON_SHORT_PRESS)) {
+				printf("Button Pressed - skip port\n");
+				channel_info_p->state = NOT_IN_USE;
+				break;
+			}
+
+			usleep(200000);
+		}
+	}	
+
+	lcd_clear();
+}
+*/
+
+
+
+
+USB Port Mappings
+-----------------
+A1	3-1.1.1
+A2	3-1.1.2
+A3	3-1.1.3
+A4	3-1.1.4
+A5	3-1.2
+A6	3-1.3
+A7	3-1.4
+
+B1	1-1.1.1
+B2	1-1.1.2
+B3	1-1.1.3
+B4	1-1.1.4
+B5	1-1.2
+B6	1-1.3
+B7	1-1.4
+
+
+
+
+
+C Program for CRC-32 Checksum
+c
+
+#include <stdio.h>
+#include <stdint.h>
+
+#define CRC32_POLY 0x04C11DB7  // Standard CRC-32 polynomial
+
+// Initialize CRC-32 table
+uint32_t crc32_table[256];
+void init_crc32_table(void) {
+    for (int i = 0; i < 256; i++) {
+        uint32_t crc = i << 24;
+        for (int j = 0; j < 8; j++) {
+            crc = (crc << 1) ^ ((crc & 0x80000000) ? CRC32_POLY : 0);
+        }
+        crc32_table[i] = crc;
+    }
+}
+
+// Compute CRC-32 checksum of a file
+uint32_t compute_crc32(const char *filename) {
+    FILE *file = fopen(filename, "rb");
+    if (!file) {
+        fprintf(stderr, "Error: Cannot open file %s\n", filename);
+        return 0;
+    }
+
+    uint32_t crc = 0xFFFFFFFF;  // Initial CRC value
+    int byte;
+
+    while ((byte = fgetc(file)) != EOF) {
+        crc = (crc << 8) ^ crc32_table[((crc >> 24) ^ byte) & 0xFF];
+    }
+
+    if (ferror(file)) {
+        fprintf(stderr, "Error: Failed to read file %s\n", filename);
+        fclose(file);
+        return 0;
+    }
+
+    crc ^= 0xFFFFFFFF;  // Final XOR
+    fclose(file);
+    return crc;
+}
+
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <file>\n", argv[0]);
+        return 1;
+    }
+
+    init_crc32_table();
+    uint32_t crc = compute_crc32(argv[1]);
+    if (crc == 0 && ferror(stderr)) {
+        return 1;
+    }
+
+    printf("%08x\n", crc);
+    return 0;
+}
+
+
+
+ffmpeg -i MAY29006.mp3 -af "agate=mode=downward:ratio=1.2, silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.7, loudnorm=I=-18:TP=-2:LRA=11" -ar 44.1k -ab 128k -ac 1 output06.mp3
+
+
+
+
+
+		// Truncate long mp3 filenames to a maximum of 64 characters
+		size_t len = strlen(entry->d_name);
+		if (len >= 4 && strcmp(entry->d_name + len - 4, ".mp3") == 0) {		
+			len = len - 4;
+			
+			if (len > 64) { 
+				len = 64;
+			}
+			
+			strncpy(names[count], entry->d_name, len);
+			strcat(names[count], ".mp3");			
+		}
+		else {
+			strcpy(names[count], entry->d_name);
+		}
+			
+			

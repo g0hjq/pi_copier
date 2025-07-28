@@ -24,6 +24,10 @@ void initialise_crc_table();
 
 uint32_t compute_crc32(char *filename);
 
+void shorten_filename(char *filename, size_t max_len);
+
+void sanitize_filename(char *filename);
+
 
 #endif // UTILITIES_H
 

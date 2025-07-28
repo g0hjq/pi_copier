@@ -70,66 +70,7 @@ bool device_is_loaded(char* device_name) {
 
     return found;
 }
-	
-/*
-void assign_device_paths_for_hub(int hub_number, char* clue)
-{
-	char line[STRING_LEN];
 
-	printf("assign_device_paths_for_hub(%d, %s)\n", hub_number, clue);
-	
-	if (!clue || (strlen(clue) < 3) || (strlen(clue) > 20))
-	{
-        fprintf(stderr, "ERROR: Invalid clue in assign_device_paths_for_hub : %s\n", clue);
-        exit(1);
-	}
-		
-	
-	FILE *f = fopen(USB_CONFIG_FILE, "r");
-	if (f == NULL) {
-        fprintf(stderr, "ERROR: Failed to open usb configuration file %s\n", USB_CONFIG_FILE);
-        exit(1);
-	}
-	
-	// Scan through the config file looking for the correctly numbered section
-	char search_string[20];
-	search_string[0] = '[';
-	search_string[1] = clue[0];
-	search_string[2] = ']';
-	search_string[3] = '\0';
-
-	while (fgets(line, sizeof(line), f) != NULL) {
-
-		// Search for the correct section, i.e. [3]
-		if (strncmp(line, search_string,3) == 0) {
-		
-			// Section found. Read all the usb paths in that section and assign them to the channel_infos
-			int port_number = 0;
-			while(fgets(line, sizeof(line), f) != NULL) {
-
-				trim(line);
-				if (line[0] != clue[0]) {
-					// No more matches. Finish
-					printf("Finish\n");
-					fclose(f);
-					return;
-				}
-				
-				// Search for the corresponding usb port in channel_infos;
-				int device_id = get_device_id_from_hub_and_port_number(shared_data_p, hub_number, port_number);
-				printf("Setting channel_info[%d].usb_path = %s\n", device_id, line);
-				ChannelInfoStruct *client_info_p = &shared_data_p->channel_info[device_id];
-				strcpy(client_info_p->device_path, line);
-				
-				port_number++;
-			}
-			
-		}	
-	}
-	
-	fclose(f);
-}
-*/
 
 
 // Returns -1 if the path is invalid
@@ -298,7 +239,10 @@ void *monitor_usb_drives_thread_function(void* arg) {
 				
                 udev_device_unref(dev);			
             }
+			
         }
+
+		usleep(200000);
     }
 
     udev_monitor_unref(mon);

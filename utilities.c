@@ -277,35 +277,36 @@ void sanitize_filename(char *filename) {
     }
 }
 
-
 void shorten_filename(char *filename, size_t max_len) {
-    if (!filename || max_len == 0) return;
-
-    size_t len = strlen(filename);
-    if (len <= max_len) return; // No need to shorten
-
-    // Find the last '.' to identify the extension
+ 
+    // Find extension
     char *ext = strrchr(filename, '.');
-    if (ext == NULL || ext == filename || *(ext + 1) == '\0') {
-        // No extension or dot at start/empty extension, truncate to max_len
-        if (len > max_len) {
-            filename[max_len] = '\0';
-        }
+    if (!ext) ext = filename + strlen(filename);  // No extension found
+    
+    size_t ext_len = strlen(ext);
+    
+    // If total length is already short enough, return unchanged
+    if (strlen(filename) <= max_len) {
         return;
     }
 
-    size_t ext_len = len - (ext - filename); // Includes the dot
-
+    // Ensure we have room for extension and null terminator
     if (ext_len >= max_len) {
-        // Extension alone is too long, truncate to max_len
-        filename[max_len] = '\0';
+        filename[0] = '\0';  // Can't fit even minimal shortened name
         return;
     }
 
-    // Shorten base name to fit within max_len
-    size_t new_base_len = max_len - ext_len;
-    memmove(filename + new_base_len, ext, ext_len + 1); // Move extension
-    filename[new_base_len] = '\0'; // Null-terminate after base name
+    // Calculate how many characters we can keep from the start
+    size_t keep_len = max_len - ext_len;
+    
+    // Create temporary buffer for result
+    char temp[256];  // Assumes max_len is reasonable
+    strncpy(temp, filename, keep_len);
+    temp[keep_len] = '\0';
+    strcat(temp, ext);
+    
+    // Copy result back to filename
+    strcpy(filename, temp);
 }
 
 
