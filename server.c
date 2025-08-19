@@ -552,7 +552,7 @@ int run(int hub_number) {
 					fprintf(stderr, "ERROR: start_process failed\n");
 					result = 1;
 				}
-				usleep(500000);	
+				usleep(250000);	
 			}
 		}
 	}
