@@ -5,6 +5,11 @@
 
 static int i2c_fd;
 
+static pthread_mutex_t lcd_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Address offsets for 20x4 LCD
+static const unsigned char line_offsets[] = {0x00, 0x40, 0x14, 0x54};
+
 // Custom character data for bargraph (5 levels: 0/5 to 5/5 pixels filled)
 static const unsigned char bargraph_chars[5][8] = {
     {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10}, // 1/5 filled (leftmost column)
@@ -58,11 +63,8 @@ void lcd_write_char(char c) {
 }
 
 
-void lcd_write_string(const char *str, int line) {
+void lcd_write_string_no_lock(const char *str, int line) {
 	
-    // Address offsets for 20x4 LCD
-    static const unsigned char line_offsets[] = {0x00, 0x40, 0x14, 0x54};
-
     // Set cursor position
     if (line >= 0 && line < 4) {
         lcd_send_byte(LCD_SET_DDRAM | line_offsets[line], 0);
@@ -79,19 +81,31 @@ void lcd_write_string(const char *str, int line) {
 	while (col < 20) {
 		lcd_write_char(' ');
 		col++;
-	}	
+	}
 }
 
 
+void lcd_write_string(const char *str, int line) {
+	pthread_mutex_lock(&lcd_mutex);		
+	lcd_write_string_no_lock(str,line);
+	pthread_mutex_unlock(&lcd_mutex);
+}
+
 void lcd_clear(void) {
+
+	pthread_mutex_lock(&lcd_mutex);	
     lcd_send_byte(LCD_CLEAR, 0);
     usleep(1520);
+	pthread_mutex_unlock(&lcd_mutex);
+
 }
 
 
 void lcd_home(void) {
+	pthread_mutex_lock(&lcd_mutex);	
     lcd_send_byte(LCD_HOME, 0);
 	usleep(1520);
+	pthread_mutex_unlock(&lcd_mutex);
 }
 
 
@@ -172,15 +186,19 @@ void lcd_display_message(const char *line0, const char *line1, const char *line2
 			memset(buf, ' ', sizeof(buf));			
 			strncpy(buf+padding, lines[i], 20-padding);
             buf[20] = '\0';
-            lcd_write_string(buf, i);
+            lcd_write_string_no_lock(buf, i);
         }
     }	
 }
 
 
 
+
+
 // Function to display a bargraph for values 0-100
 void lcd_display_bargraph(int value, int row) {
+
+	pthread_mutex_lock(&lcd_mutex);	
 
     // Ensure value is within 0-100
     if (value < 1) value = 1;
@@ -193,6 +211,7 @@ void lcd_display_bargraph(int value, int row) {
     if (row >= 0 && row < 4) {
         lcd_send_byte(LCD_SET_DDRAM | row_offsets[row], 0);
     } else {
+		pthread_mutex_unlock(&lcd_mutex);
         return; // Invalid row
     }
 
@@ -215,6 +234,7 @@ void lcd_display_bargraph(int value, int row) {
     for (int i = full_blocks; i < 20; i++) {
         lcd_write_char(' ');
     }
+	pthread_mutex_unlock(&lcd_mutex);
 }
 
 

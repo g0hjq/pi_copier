@@ -737,7 +737,7 @@ int main() {
 	// Initialise the LCD etc
 	gpio_init(shared_data_p);
 	lcd_init(shared_data_p);
-	lcd_display_message("RPi USB Duplicator", NULL, VERSION_STRING, "(Gary Bleads G0HJQ)");
+	lcd_display_message("RPi USB Duplicator", "---", VERSION_STRING, "(Gary Bleads G0HJQ)");
 	usb_init(shared_data_p);
 	
 	test_leds();

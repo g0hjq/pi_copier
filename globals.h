@@ -31,6 +31,7 @@
 #include <gpiod.h>
 #include <execinfo.h>
 #include <dirent.h>
+#include <pthread.h>
 
 
 #define VERSION_STRING "v1.2.0 " __DATE__
