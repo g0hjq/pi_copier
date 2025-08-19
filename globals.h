@@ -33,7 +33,7 @@
 #include <dirent.h>
 
 
-#define VERSION_STRING "v1.1.0 " __DATE__
+#define VERSION_STRING "v1.2.0 " __DATE__
 #define VERIFY true
 #define CRC_SIZE 1*1024*1024   // CRCs will only be generated and checked for the first 1MB in each file
 
@@ -42,7 +42,7 @@
 #define MOUNT_POINT "/mnt/usb"
 //#define USB_CONFIG_FILE "./usb_ports.config"
 #define CRC_FILE "/var/ramdrive/crc.txt"
-#define FFMPEG_FILTERS "agate=mode=downward:ratio=1.2, silenceremove=start_periods=1:start_threshold=-40dB:start_silence=0.7, loudnorm=I=-18:TP=-2:LRA=7"
+#define FFMPEG_FILTERS "agate=mode=downward:ratio=1.2, silenceremove=start_periods=1:start_threshold=-35dB:start_silence=0.7, loudnorm=I=-18:TP=-2:LRA=7"
 #define NUMBER_OF_FFMPEG_THREADS 4
 
 	

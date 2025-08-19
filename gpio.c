@@ -160,9 +160,9 @@ static void send_led_data(unsigned char* bits, int bit_count)
 		delay_us(GPIO_DELAY);
 		gpiod_line_set_value(clock_line, 0);
 	}		
-	gpiod_line_set_value(latch_line1, 1);
+	gpiod_line_set_value(latch_line0, 1);
 	delay_us(GPIO_DELAY);
-	gpiod_line_set_value(latch_line1, 0);
+	gpiod_line_set_value(latch_line0, 0);
 	delay_us(GPIO_DELAY);
 	
 	// Send the LED data to the top set of shift registers
@@ -174,9 +174,9 @@ static void send_led_data(unsigned char* bits, int bit_count)
 		delay_us(GPIO_DELAY);
 		gpiod_line_set_value(clock_line, 0);
 	}		
-	gpiod_line_set_value(latch_line0, 1);
+	gpiod_line_set_value(latch_line1, 1);
 	delay_us(GPIO_DELAY);
-	gpiod_line_set_value(latch_line0, 0);
+	gpiod_line_set_value(latch_line1, 0);
 	delay_us(GPIO_DELAY);
 
 }
