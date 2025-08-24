@@ -9,7 +9,7 @@ static bool usb_removed;
 static char usb_name[STRING_LEN];
 static char usb_path[STRING_LEN];
 static SharedDataStruct* shared_data_p;
-
+static NamePathStruct usb_devices_loaded[MAX_USB_CHANNELS];
 
 
 //------------------------------------------------------------------------------------------------
@@ -20,55 +20,16 @@ static SharedDataStruct* shared_data_p;
 //------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------
 
+
 bool device_is_loaded(char* device_name) {
 	
-	struct udev *udev;
-    struct udev_enumerate *enumerate;
-    struct udev_list_entry *devices, *dev_list_entry;
-    struct udev_device *dev;
-    bool found = false;
-
-    // Initialize udev
-    udev = udev_new();
-    if (!udev) {
-        fprintf(stderr, "ERROR: Cannot create udev context\n");
-        exit(1);
-    }
-
-    // Create an enumeration context
-    enumerate = udev_enumerate_new(udev);
-    udev_enumerate_add_match_subsystem(enumerate, "block");
-    udev_enumerate_add_match_property(enumerate, "DEVTYPE", "disk");
-    udev_enumerate_scan_devices(enumerate);
-
-    // Get the list of devices
-    devices = udev_enumerate_get_list_entry(enumerate);
-    udev_list_entry_foreach(dev_list_entry, devices) {
-		
-        const char *path = udev_list_entry_get_name(dev_list_entry);
-        dev = udev_device_new_from_syspath(udev, path);
-
-        // Check if device is a USB disk
-        if (dev) {
-            const char *id_bus = udev_device_get_property_value(dev, "ID_BUS");
-            const char *devname = udev_device_get_devnode(dev);
-			
-            if (id_bus && strcmp(id_bus, "usb") == 0 && devname) {
-				
-				if (strcmp(devname, device_name)==0) {
-					found = true;
-				}
-            }
-            udev_device_unref(dev);
+    for (int i = 0; i < MAX_USB_CHANNELS; i++) {		
+        if (strcmp(usb_devices_loaded[i].device_name, device_name) == 0) {
+            return true;
         }
-    }
+	}
 	
-
-    // Cleanup
-    udev_enumerate_unref(enumerate);
-    udev_unref(udev);
-
-    return found;
+	return false;
 }
 
 
@@ -87,34 +48,64 @@ int get_device_id_from_path(const SharedDataStruct* shared_data_p, char* path)
 		}		
 	}
 	
-	// None found. Find the first usb hub which has not had it's usb paths setup yet
-	/* for (int hub=0; hub<NUMBER_OF_HUBS; hub++)
-	{
-		int device_id = get_device_id_from_hub_and_port_number(shared_data_p, hub, 0);
-		const ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];
-		if (strlen(channel_info_p->device_path) == 0)
-		{
-			assign_device_paths_for_hub(hub, path);
-			break;
-		}
-	}
-	
-	// And scan again
-	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++)
-	{
-		const ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];
-		if (strcmp(channel_info_p->device_path, path) == 0)
-		{
-			// Found it
-			return device_id;
-		}		
-	}
-	*/
-	
 	//fprintf(stderr, "get_device_id_from_path: path not found. Path=%s\n", path);
 	return -1;
 }
 
+
+
+
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+// List of usb devices currently loaded
+// (Used to detect insertions or removals)
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------
+
+
+// Adds a new usb name and path to the list of loaded devices. 
+// or updates the name of the existing path (Should probably never happen)
+// if it's a new device, it adds it to the first vacant slot.
+void add_to_devices_loaded_list(char* name, char* path) {
+
+	printf("Entering add_to_devices_loaded_list(%s, %s)\n", name, path);
+	
+    for (int i = 0; i < MAX_USB_CHANNELS; i++) {
+		
+		if (strcmp(usb_devices_loaded[i].device_path, path) == 0) {
+			strncpy(usb_devices_loaded[i].device_name, name, STRING_LEN - 1);
+			usb_devices_loaded[i].device_name[STRING_LEN - 1] = '\0';
+			printf("Updated device name in slot %d\n", i);
+			return;
+		}	
+	}
+
+    // Path not found. Save in first empty slot
+    for (int i = 0; i < MAX_USB_CHANNELS; i++) {
+		if (usb_devices_loaded[i].device_path[0] == 0) {
+			strncpy(usb_devices_loaded[i].device_name, name, STRING_LEN);
+			strncpy(usb_devices_loaded[i].device_path, path, STRING_LEN);			
+			return;
+		}			
+	}
+	
+	fprintf(stderr, "ERROR: No empty slots in usb_devices_loaded[]\n");
+    exit(1);
+}
+
+
+int find_in_devices_loaded_list(char* path) {
+	
+    for (int i = 0; i < MAX_USB_CHANNELS; i++) {		
+        if (strcmp(usb_devices_loaded[i].device_path, path) == 0) {
+            return i;
+        }
+	}
+	
+	return -1;
+}
 
 
 //------------------------------------------------------------------------------------------------
@@ -125,130 +116,137 @@ int get_device_id_from_path(const SharedDataStruct* shared_data_p, char* path)
 //------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------
 
+
 /**
- * @brief Thread function to monitor USB drive events.
+ * @brief Thread function to monitor USB drive insertions and removals.
  * @param arg Pointer to SharedDataStruct.
  * @return NULL.
  */
 void *monitor_usb_drives_thread_function(void* arg) {
 
-    struct udev *udev;
-    struct udev_monitor *mon;
-    struct udev_device *dev;
-    int fd;
-	char buff[STRING_LEN];
-
-    printf("Initialising USB drive events thread\n");
-
-    udev = udev_new();
-    if (!udev) {
-        fprintf(stderr, "ERROR: Failed to create udev context\n");
-        exit(1);
-    }
-
-    mon = udev_monitor_new_from_netlink(udev, "udev");
-    if (!mon) {
-        fprintf(stderr, "ERROR: Failed to create udev monitor\n");
-        exit(1);
-    }
-
-    if (udev_monitor_filter_add_match_subsystem_devtype(mon, "block", NULL) < 0) {
-        fprintf(stderr, "ERROR: Failed to set monitor filter\n");
-        exit(1);
-    }
-
-    if (udev_monitor_enable_receiving(mon) < 0) {
-        fprintf(stderr, "ERROR: Failed to enable monitor\n");
-        exit(1);
-    }
-
-    fd = udev_monitor_get_fd(mon);
-    if (fd < 0) {
-        fprintf(stderr, "ERROR: Failed to get monitor file descriptor\n");
-        exit(1);
-    }
-
     printf("Monitoring for USB drive events in thread...\n");
+    char link_path[PATH_LEN];
+	char path[PATH_LEN];
+	char buff[STRING_LEN];
+	NamePathStruct usb_devices[MAX_USB_CHANNELS];  // list of usb drives actually present
+	int usb_devices_count;  // number of entries in usb_devices array above
+	struct dirent *ent;
 
     while (true) {
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(fd, &fds);
 
-        if (select(fd + 1, &fds, NULL, NULL, NULL) > 0 && FD_ISSET(fd, &fds)) {
-            dev = udev_monitor_receive_device(mon);
-            if (dev) {
-                const char *id_bus = udev_device_get_property_value(dev, "ID_BUS");
-                const char *subsystem = udev_device_get_subsystem(dev);
-				const char *devtype = udev_device_get_devtype(dev);
-                const char *action = udev_device_get_action(dev);
-                const char *devnode = udev_device_get_devnode(dev);
-                const char *syspath = udev_device_get_syspath(dev);
+		// Get the names of all loaded devices from /sys/block
+		DIR *dir = opendir("/sys/block");
+		if (dir == NULL) {
+			perror("Failed to open /sys/block\n");
+			exit(1);
+		}
 
+		memset(usb_devices, 0, sizeof(usb_devices));
+		usb_devices_count = 0;
+		
+		
+		while ((ent = readdir(dir)) != NULL) {
 
-				if (id_bus  && devtype && devnode && syspath && action)
-				{
-					if ( (strcmp(id_bus,"usb")==0) && 
-					     (strcmp(subsystem,"block")==0) && 
-						 (strcmp(devtype,"partition")!=0) )
-					{				
-						extract_usb_path(syspath, buff);
-						
-						int device_id = -1;
-						if (shared_data_p)
-						{
-							device_id = get_device_id_from_path(shared_data_p, buff);
-							//printf("buff=%s, device_id=%d\n", buff, device_id);
-						}
-						
-						printf("Action:%s id_bus=%s devtype:%s path:%s devnode:%s subsystem:%s syspath:%s deviceid:%d\n", 
-								action, id_bus, devtype, buff, devnode, subsystem, syspath, device_id);
-						
-						if (strcmp(action, "add") == 0) {
-							
-							// User has just plugged in a USB drive
-							strcpy(usb_path, buff);
-							strcpy(usb_name, devnode);
-							usb_removed = false;
-							usb_inserted = true;
-							if (device_id >= 0) {
-								ChannelInfoStruct *client_info_p = &shared_data_p->channel_info[device_id];
-								client_info_p->state = READY;
-								strcpy(client_info_p->device_name, usb_name);
-								printf("Inserted %s (%s) into slot %d\n", usb_name, usb_path, device_id);
-							}
-						} else if (strcmp(action, "remove") == 0) {
-
-							// User has just removed a USB drive
-							strcpy(usb_path, buff);
-							strcpy(usb_name, devnode);							
-							usb_inserted = false;
-							
-							usb_removed = true;
-
-							if (device_id >= 0) {
-								ChannelInfoStruct *client_info_p = &shared_data_p->channel_info[device_id];
-								if (client_info_p->state != FAILED) {
-									client_info_p->state = EMPTY;
-								}
-								client_info_p->device_name[0] = '\0';
-							}
-						}
-                    }
-                }
-				
-                udev_device_unref(dev);			
-            }
+			// check if the name starts with "SD"
+			if (strncmp(ent->d_name, "sd", 2) != 0) continue;
 			
-        }
+			// Check if removable
+			snprintf(path, sizeof(path), "/sys/block/%s/removable", ent->d_name);
+			FILE *f = fopen(path, "r");
+			if (!f) continue;
+			
+			if (fgets(buff, sizeof(buff), f) == NULL || atoi(buff) != 1) {
+				fclose(f);
+				continue;
+			}
 
+			fclose(f);
+
+			// Resolve the symbolic link to get the USB port path
+            snprintf(path, sizeof(path), "/sys/block/%s", ent->d_name);
+            ssize_t len = readlink(path, link_path, sizeof(link_path) - 1);
+            if (len == -1) {
+                perror("Failed to read symbolic link");
+                continue;
+            }
+            link_path[len] = '\0'; // Null-terminate the string
+
+			extract_usb_path(link_path, path);
+			
+			// truncate oversize strings
+			sprintf(usb_devices[usb_devices_count].device_name, "/dev/%s", ent->d_name);			
+			
+			path[STRING_LEN-1] = 0;
+			strcpy(usb_devices[usb_devices_count].device_path, path);
+			usb_devices_count++;
+
+		}
+		
+		closedir(dir);
+		
+		// Check for any recently inserted devices (i.e. those not already in the devices_loaded list)
+		for (int i=0; i<usb_devices_count; i++) {			
+			if (find_in_devices_loaded_list(usb_devices[i].device_path) < 0)
+			{
+				add_to_devices_loaded_list(usb_devices[i].device_name, usb_devices[i].device_path);
+				strcpy(usb_name, usb_devices[i].device_name);
+				strcpy(usb_path, usb_devices[i].device_path);
+				usb_inserted = true;
+				
+				if (shared_data_p)
+				{
+					int device_id = get_device_id_from_path(shared_data_p, usb_path);
+					printf("add usb device. path=%s, device_id=%d\n", usb_path, device_id);
+				
+					if (device_id >= 0)
+					{
+						ChannelInfoStruct *client_info_p = &shared_data_p->channel_info[device_id];
+						client_info_p->state = READY;
+						strcpy(client_info_p->device_name, usb_name);
+					}
+				}					
+			}	
+		}
+		
+		// check for any recently removed devices (i.e. those in the devices_loaded list but not actually present)
+		for (int i = 0; i < MAX_USB_CHANNELS; i++) {
+		
+			if (usb_devices_loaded[i].device_path[0] != 0) {
+				
+				bool found = false;
+				for (int j=0; j<usb_devices_count; j++) {										
+					if (strcmp(usb_devices[j].device_path, usb_devices_loaded[i].device_path) == 0) {
+						found = true;
+						//printf("...Found in slot %d = %b\n", j, found);
+						break;
+					}
+				}
+					
+				if (!found) {
+					int device_id = get_device_id_from_path(shared_data_p, usb_devices_loaded[i].device_path);
+					printf("Removed usb device. id=%d, path=%s\n", device_id, usb_devices_loaded[i].device_path);
+
+					// Device is no longer present. Remove the device from the usb_devices_loaded list
+					usb_devices_loaded[i].device_name[0] = 0;
+					usb_devices_loaded[i].device_path[0] = 0;
+					usb_removed = true;
+					
+					if (device_id >= 0) {
+						ChannelInfoStruct *client_info_p = &shared_data_p->channel_info[device_id];
+						if ((client_info_p->state != FAILED) && (client_info_p->state != CRC_FAILED)) {
+							 client_info_p->state = EMPTY;
+						}
+						client_info_p->device_name[0] = '\0';
+					}
+				}				
+			}
+		}
+		
 		usleep(200000);
-    }
-
-    udev_monitor_unref(mon);
-    udev_unref(udev);
-    return NULL;
+	}
+	
 }
+
 
 
 //------------------------------------------------------------------------------------------------
@@ -310,6 +308,8 @@ void usb_init(SharedDataStruct* shared_data)
         fprintf(stderr, "ERROR: Invalid shared_data passed to usb_init\n");
 		exit(1);
 	}
+
+	memset(usb_devices_loaded, 0, sizeof(usb_devices_loaded));
 
 	usb_inserted = false;
 	usb_removed = false;

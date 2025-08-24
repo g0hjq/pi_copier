@@ -77,7 +77,9 @@ void* ffmpeg_thread_function(void* arg)
 	
 
 	// run ffmpeg. output in 128K mono
-	snprintf(buffer2, sizeof(buffer2), "ffmpeg -i %s -y -loglevel error -af \"%s\" -f mp3 -ar 44.1K -ab 128k -ac 1 %s", mp3_file, FFMPEG_FILTERS, temp_file);
+	snprintf(buffer2, sizeof(buffer2), 
+		"ffmpeg -i \"%s\" -y -loglevel error -af \"%s\" -f mp3 -ar 44.1K -ab 128k -ac 1 \"%s\"", 
+		mp3_file, FFMPEG_FILTERS, temp_file);
 	ret = execute_command(-1, buffer2, false);
 	
 	if (sem_post(&ffmpeg_sem) == -1) {
@@ -95,14 +97,14 @@ void* ffmpeg_thread_function(void* arg)
 		return(NULL);
 	}
 
-	snprintf(buffer2, sizeof(buffer2), "rm %s", mp3_file);
+	snprintf(buffer2, sizeof(buffer2), "rm \"%s\"", mp3_file);
 	if (execute_command(-1, buffer2, false) != 0) {
 		fprintf(stderr, "ERROR deleting %s\n", mp3_file);
 		return(NULL);
 	}
 		
 
-	snprintf(buffer2, sizeof(buffer), "mv %s %s", temp_file, mp3_file);		
+	snprintf(buffer2, sizeof(buffer), "mv \"%s\" \"%s\"", temp_file, mp3_file);		
 	if (execute_command(-1, buffer2, false) != 0) {
 		fprintf(stderr, "ERROR renaming %s to %s\n", temp_file, mp3_file);
 	}
@@ -327,21 +329,21 @@ void test_leds() {
 
 	printf("LED Test - All Red\n");
 	set_all_states(FAILED);
-	usleep(400000);
+	usleep(200000);
 
 	printf("LED Test - All Yellow\n");
 	set_all_states(READY);
-	usleep(400000);
+	usleep(200000);
 
 	printf("LED Test - All Green\n");
 	set_all_states(SUCCESS);
-	usleep(400000);
+	usleep(200000);
 
 	printf("LED Test - Left to Right\n");
 	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++) {		
 		set_all_states(EMPTY);		
 		set_state(device_id, LED_TEST);
-		usleep(200000);
+		usleep(100000);
 	}
 
 	printf("LED Test - All Off\n");
@@ -550,7 +552,7 @@ int run(int hub_number) {
 					fprintf(stderr, "ERROR: start_process failed\n");
 					result = 1;
 				}
-				usleep(500000);	
+				usleep(250000);	
 			}
 		}
 	}
@@ -588,7 +590,7 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 	int fail = 0; 
 	int pass = 0; 
 	off_t total_bytes_copied = 0;
-	int lcd_line = hub_number*2;
+	int lcd_line = (hub_number==0) ? 2 : 0;
 
 	for (int i=0; i<MAX_USB_CHANNELS; i++)
 	{		
@@ -735,7 +737,7 @@ int main() {
 	// Initialise the LCD etc
 	gpio_init(shared_data_p);
 	lcd_init(shared_data_p);
-	lcd_display_message("RPi USB Duplicator", NULL, VERSION_STRING, "(Gary Bleads G0HJQ)");
+	lcd_display_message("RPi USB Duplicator", "---", VERSION_STRING, "(Gary Bleads G0HJQ)");
 	usb_init(shared_data_p);
 	
 	test_leds();
@@ -801,8 +803,8 @@ int main() {
 			starting = false;
 		}
 
-		hub_main(0, button_state0);
-		hub_main(1, button_state1);
+		hub_main(0, button_state1);
+		hub_main(1, button_state0);
 		
 		usleep(100000);
 	}
