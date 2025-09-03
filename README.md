@@ -67,7 +67,6 @@ All the below files are in /home/pi/copier
 | utilities.*      | Shared helper functions                           |
 | globals.h        | Various type definitions and constants            |
 | makefile         | Used by the build process                         |
-| usb_ports.config | This is used by the port mapping, and MAY need to be updated if you change the USB hubs |
 | setup_ap.sh      | Sets the Raspberry Pi WiFi into Access Point mode to allow direct access from a laptop without connecting via a WiFi hub |
 | disable_ap.sh    | Sets the Raspberry Pi into normal WiFi mode for connections via a WiFi hub |
 
