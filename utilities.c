@@ -44,7 +44,6 @@ void print_client_info(const ChannelInfoStruct* client_info_p) {
 	printf("  PORT NUM      %u\n", client_info_p->port_number);
 	printf("  HALT          %s\n", client_info_p->halt ? "true" : "false");
 	printf("  STATE         %s\n", get_state_name(client_info_p->state));
-	printf("  PID           %d\n", client_info_p->pid);
 	printf("  START_TIME    %lu\n", client_info_p->start_time);
 	printf("  DEVICE_NAME   %s\n", client_info_p->device_name);
 	printf("  DEVICE_PATH   %s\n", client_info_p->device_path);
@@ -59,8 +58,6 @@ void print_client_info(const ChannelInfoStruct* client_info_p) {
 void print_shared_data(const SharedDataStruct* shared_data_p) {
 	printf("\n\n\nSHARED DATA\n==========================\n");
 	printf("ShareDataStruct size = %lu\n", sizeof(SharedDataStruct));
-	printf(" settings.autostart = %d\n", shared_data_p->settings.autostart); 
-	printf(" settings.reformat = %d\n\n", shared_data_p->settings.reformat); 
 	printf("DEVICE INFO :\n");
 
 	for (int i=0; i<MAX_USB_CHANNELS; i++)
@@ -75,6 +72,7 @@ void print_shared_data(const SharedDataStruct* shared_data_p) {
 //------------------------------
 // Shared Helper functions
 //------------------------------
+
 
 
 int get_device_id_from_hub_and_port_number(const SharedDataStruct* shared_data_p, int hub_number, int port_number) {
@@ -145,7 +143,6 @@ void extract_usb_path(const char *input, char *output) {
     strncpy(output, start, length);
     output[length] = '\0';
 }
-
 
 
 

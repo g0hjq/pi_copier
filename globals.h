@@ -34,7 +34,7 @@
 #include <pthread.h>
 
 
-#define VERSION_STRING "v1.2.0 " __DATE__
+#define VERSION_STRING "v1.3.0 " __DATE__
 #define VERIFY true
 #define CRC_SIZE 1*1024*1024   // CRCs will only be generated and checked for the first 1MB in each file
 
@@ -106,18 +106,11 @@ typedef struct {
 	int port_number;
 	bool halt;
 	ChannelStateEnum state;
-	pid_t pid;
 	time_t start_time;
 	char device_name[STRING_LEN];
 	char device_path[STRING_LEN];
 	off_t bytes_copied;
 } ChannelInfoStruct;
-
-
-typedef struct {
-	bool autostart;
-	bool reformat;
-} SettingsStruct;
 
 
 typedef struct {
@@ -127,9 +120,9 @@ typedef struct {
 
 
 typedef struct {
-	off_t total_size;
-	SettingsStruct settings;
+	off_t total_size;    // total size of all files
 	ChannelInfoStruct channel_info[MAX_USB_CHANNELS];
+	uint32_t channels_active;
 } SharedDataStruct;
 
 

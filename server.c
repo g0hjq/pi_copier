@@ -305,7 +305,6 @@ int start_process(int device_id) {
         char *args[] = {"sudo", "./client", buffer, NULL};
 
         // Execute command
-		channel_info_p->pid = pid;
 		channel_info_p->state = STARTING;
 		channel_info_p->start_time = time(NULL);
 		channel_info_p->bytes_copied = 0;
@@ -356,38 +355,38 @@ void test_leds() {
 // Prompts the user to insert the master USB in slot one. 
 // Recursively copies all files to the ramdrive
 int load_master() {
-	char name[STRING_LEN];
-	char path[STRING_LEN];
 	
 	lcd_display_message(NULL, "Insert Master", "in slot 1", NULL);
 	set_all_states(EMPTY);
 	set_state(0, INDICATING);
 
+	ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[0];
+
 	// Wait for USB inserted
 	printf("Waiting for master USB to be inserted\n");
-	while(!usb_device_inserted(name, path)) {
+	while(channel_info_p->device_name[0] == '\0') {
 		usleep(100000);
 	}
 	
-	printf("found master : name=%s path=%s\n", name, path);
+	printf("found master : name=%s path=%s\n", channel_info_p->device_name, channel_info_p->device_path);
 	
 	set_state(0, COPYING);
-	lcd_display_message("Reading Master", NULL, name, path);
+	lcd_display_message("Reading Master", NULL, channel_info_p->device_name, channel_info_p->device_path);
 	
     // Choose the name of the mount point. 
 	// If device name is /dev/sda, the mount point will be /mnt/usb/sda1
 	char mount_point[STRING_LEN];
-	const char* last_slash = strrchr(name, '/');
+	const char* last_slash = strrchr(channel_info_p->device_name, '/');
 	if (!last_slash)
 	{
-		fprintf(stderr, "ERROR: device_name '%s' is not in expected format\n", name);
+		fprintf(stderr, "ERROR: device_name '%s' is not in expected format\n", channel_info_p->device_name);
 		return 1;
 	}		
     snprintf(mount_point, sizeof(mount_point), "%s/%s1", MOUNT_POINT, last_slash+1);	
 	
 	// Append '1' to the device name to get the partition name, i.e. /dev/sdb1
 	char partition_name[STRING_LEN];
-	strncpy(partition_name, name, STRING_LEN);
+	strncpy(partition_name, channel_info_p->device_name, STRING_LEN);
 	strncat(partition_name, "1", STRING_LEN-1);
 	printf("Mount Point=%s Partition=%s\n", mount_point, partition_name);
 
@@ -450,61 +449,47 @@ int load_master() {
 // the usb port number to enable us to light the correct LEDs
 void map_usb_port_numbers(void)
 {	
-	int channel_number = 0;
-	char name[STRING_LEN];
-	char path[STRING_LEN];
 	char message[STRING_LEN+20];
+	uint32_t ports_mapped = 0;
 	
-	bool done = false;
 	strcpy(message, "Push Button to skip");
 	
-	while ((channel_number < MAX_USB_CHANNELS) && !done)
+	while (ports_mapped < MAX_USB_CHANNELS)
 	{
-		ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[channel_number];
+		ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[ports_mapped];
 		channel_info_p->state = INDICATING;
 		
 		lcd_clear();
 		beep();
 		
-		sprintf(buffer, "in socket %d", channel_number+1);
-		lcd_display_message( (channel_number == 0)?"Insert first device":"Insert next device",
+		sprintf(buffer, "in socket %d", ports_mapped+1);
+		lcd_display_message( (ports_mapped == 0)?"Insert first device":"Insert next device",
 					buffer,
 					NULL,
 					message);
 		
 		
-		while (!done) {
-			
+		while (true) {
+						
 			if ((get_button_state0() == BUTTON_SHORT_PRESS) || (get_button_state1() == BUTTON_SHORT_PRESS)) {
-				//done = true;
 				channel_info_p->state = EMPTY;
-				channel_number++;
+				ports_mapped++;
 				usleep(500000);
 				break;
 			}
 
-			if (usb_device_inserted(name, path)) {
-				printf("found usb device %d : name=%s path=%s\n", channel_number, name, path);
-
-
-				// error if the channel has already been mapped
-				if (get_device_id_from_path(shared_data_p, path) >= 0) { 
-					lcd_display_error_message("SOCKET IS ALREADY", "ASSIGNED");
-				}
-				else {
-					sprintf(message, "[Port %d=%s]", channel_number+1, path);
-
-					strcpy(channel_info_p->device_name, name);
-					strcpy(channel_info_p->device_path, path);
-					channel_info_p->state = READY;
-					channel_number++;
-				}
+			if (shared_data_p->channels_active > ports_mapped)
+			{
+				sprintf(message, "[Port %d=%s]", 
+					shared_data_p->channels_active, channel_info_p->device_path);
+				channel_info_p->state = READY;
+				ports_mapped++;
 				
 				usleep(200000);
 				break;
 			}			
 			
-			usleep(50000);
+			usleep(100000);
 		}		
 	}	
 
@@ -533,7 +518,7 @@ int run(int hub_number) {
 		ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];	
 		
 		// Clears error lights from previous fails when the drive has been removed
-		if (!device_is_loaded(channel_info_p->device_name)) {
+		if (channel_info_p->device_name[0] == '\0') {
 			channel_info_p->state = EMPTY;
 		}
 		
@@ -723,9 +708,8 @@ int main() {
 
 	// initialise values in shared memory
 	memset(shared_data_p, 0, sizeof(SharedDataStruct));
+	shared_data_p->channels_active = 0;
 	
-	shared_data_p->settings.reformat = true;
-	shared_data_p->settings.autostart = false;
 	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++) {	
 		ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];	
 		channel_info_p->device_id = device_id;
@@ -772,13 +756,15 @@ int main() {
 	
 	// Wait for USB removed
 	printf("Waiting for master USB to be removed\n");
-	while(!usb_device_removed(NULL, NULL)) {
-		usleep(100000);
+	while(shared_data_p->channel_info[0].device_name[0] != '\0') {
+		usleep(200000);
 	}
 	
+	shared_data_p->channel_info[0].device_path[0] = '\0';
+	shared_data_p->channels_active = 0;
 	lcd_clear();
 	beep();
-
+	usleep(1000000);
 	
 	// Ask the user to load a blank usb stick into each slot in turn
 	// so we can work out the channel number (and hence LEDs) to associate with each USB slot
@@ -788,7 +774,7 @@ int main() {
 	get_button_state0();
 	get_button_state1();
 	
-	beep();
+	beep();	
 	lcd_display_message("READY", NULL, "Push button to start", NULL);
 	
 	bool starting = true;
