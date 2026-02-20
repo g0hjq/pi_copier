@@ -305,6 +305,7 @@ int start_process(int device_id) {
         char *args[] = {"sudo", "./client", buffer, NULL};
 
         // Execute command
+		channel_info_p->pid = pid;
 		channel_info_p->state = STARTING;
 		channel_info_p->start_time = time(NULL);
 		channel_info_p->bytes_copied = 0;
@@ -723,6 +724,8 @@ int main() {
 	// initialise values in shared memory
 	memset(shared_data_p, 0, sizeof(SharedDataStruct));
 	
+	shared_data_p->settings.reformat = true;
+	shared_data_p->settings.autostart = false;
 	for (int device_id=0; device_id<MAX_USB_CHANNELS; device_id++) {	
 		ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];	
 		channel_info_p->device_id = device_id;
