@@ -34,8 +34,7 @@
 #include <pthread.h>
 
 
-#define VERSION_STRING "v1.3.0 " __DATE__
-#define VERIFY true
+#define VERSION_STRING "v1.3.1 " __DATE__
 #define CRC_SIZE 1*1024*1024   // CRCs will only be generated and checked for the first 1MB in each file
 
 #define SHM_NAME "/usb_copier_shm"
@@ -48,7 +47,7 @@
 
 	
 #define MAX_FILES 1024      // Maximum number of files/directories per directory
-#define COPY_BUFFER_SIZE 65536  // Buffer size for file copying
+#define COPY_BUFFER_SIZE 1024*1024  // Buffer size for file copying
 #define STRING_LEN 256        // general name string length
 #define PATH_LEN 512          // Maximum path length
 
@@ -69,6 +68,11 @@
 
 #define I2C_DEVICE "/dev/i2c-1" // I2C bus 1 on Raspberry Pi
 #define I2C_ADDR 0x27          // Default I2C address (adjust to 0x3F if needed)
+
+#define PARTITION 0
+#define FORMAT 1
+#define VERIFY 1
+
 
 
 //---------------------

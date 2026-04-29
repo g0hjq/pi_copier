@@ -6,8 +6,9 @@
 
 char buffer[STRING_LEN*2];
 SharedDataStruct* shared_data_p = NULL;
-sem_t ffmpeg_sem;
-pthread_mutex_t crc_file_mutex = PTHREAD_MUTEX_INITIALIZER;
+static sem_t ffmpeg_sem;
+static pthread_mutex_t crc_file_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t ffmpeg_count_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
 
@@ -88,8 +89,12 @@ void* ffmpeg_thread_function(void* arg)
 	}
 		
 	printf("*******run_ffmpeg(%s) ....FINISHED\n", mp3_file);
-	ffmpeg_complete_count++;	
-	int percent_complete = (ffmpeg_complete_count*100) / ffmpeg_file_count;
+	
+	pthread_mutex_lock(&ffmpeg_count_mutex);
+    ffmpeg_complete_count++;
+    int percent_complete = (ffmpeg_complete_count*100) / ffmpeg_file_count;
+    pthread_mutex_unlock(&ffmpeg_count_mutex);
+
 	lcd_display_bargraph(percent_complete, 3);
 	
 	if (ret != 0) {
@@ -104,7 +109,7 @@ void* ffmpeg_thread_function(void* arg)
 	}
 		
 
-	snprintf(buffer2, sizeof(buffer), "mv \"%s\" \"%s\"", temp_file, mp3_file);		
+	snprintf(buffer2, sizeof(buffer2), "mv \"%s\" \"%s\"", temp_file, mp3_file);		
 	if (execute_command(-1, buffer2, false) != 0) {
 		fprintf(stderr, "ERROR renaming %s to %s\n", temp_file, mp3_file);
 	}
@@ -240,6 +245,7 @@ void generate_crcs(char* path, FILE *crc_file) {
 				// Write '<filename>[tab]<crc>' to the CRC file
 				uint32_t actual_crc = compute_crc32(subpath);				
 				
+				// mutex is for filewrites
 				pthread_mutex_lock(&crc_file_mutex);
 				const char* ptr = subpath + strlen(RAMDIR_PATH) + 1;  
 				fprintf(crc_file, "%s\t%08x\n", ptr, actual_crc);	
@@ -271,7 +277,7 @@ int start_process(int device_id) {
 		
 	printf("Start client process for device number %d \n", device_id);
 	
-	if ((device_id < 0) || (device_id > MAX_USB_CHANNELS)) {
+	if ((device_id < 0) || (device_id >= MAX_USB_CHANNELS)) {
 		fprintf(stderr, "ERROR: Start_processs: device_id %d invalid\n", device_id);
 		exit(1);
 	}
@@ -355,8 +361,8 @@ void test_leds() {
 // Prompts the user to insert the master USB in slot one. 
 // Recursively copies all files to the ramdrive
 int load_master() {
-	char name[STRING_LEN];
-	char path[STRING_LEN];
+	char name[STRING_LEN-1];
+	char path[STRING_LEN-1];
 	
 	lcd_display_message(NULL, "Insert Master", "in slot 1", NULL);
 	set_all_states(EMPTY);
@@ -375,7 +381,7 @@ int load_master() {
 	
     // Choose the name of the mount point. 
 	// If device name is /dev/sda, the mount point will be /mnt/usb/sda1
-	char mount_point[STRING_LEN];
+	char mount_point[30];
 	const char* last_slash = strrchr(name, '/');
 	if (!last_slash)
 	{
@@ -386,8 +392,7 @@ int load_master() {
 	
 	// Append '1' to the device name to get the partition name, i.e. /dev/sdb1
 	char partition_name[STRING_LEN];
-	strncpy(partition_name, name, STRING_LEN);
-	strncat(partition_name, "1", STRING_LEN-1);
+	snprintf(partition_name, sizeof(partition_name), "%s1", name);
 	printf("Mount Point=%s Partition=%s\n", mount_point, partition_name);
 
 
@@ -475,7 +480,6 @@ void map_usb_port_numbers(void)
 		while (!done) {
 			
 			if ((get_button_state0() == BUTTON_SHORT_PRESS) || (get_button_state1() == BUTTON_SHORT_PRESS)) {
-				//done = true;
 				channel_info_p->state = EMPTY;
 				channel_number++;
 				usleep(500000);

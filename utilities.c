@@ -1,5 +1,6 @@
 #include "globals.h"
 #include "utilities.h"
+#include <sys/sendfile.h>
 
 #define CRC32_POLY 0x04C11DB7  // Standard CRC-32 polynomial
 
@@ -192,77 +193,146 @@ int compare_names(const void *a, const void *b) {
 
 
 /**
- * Function to copy a single file (ignoring permissions) and return its size
+ * Function to copy a single file (ignoring permissions) and return its size.
+ * Uses sendfile(2) for a zero-copy kernel-side transfer. Falls back to a
+ * plain read/write loop if sendfile isn't supported on this filesystem.
+ *
  * @param src_path Source file path
  * @param dest_path Destination file path
  * @param halt_p Pointer to the halt flag. Aborts copy if true
- * @param bytes_copied_p Pointer to store the bytes copied (output)
+ * @param bytes_copied_p Pointer to store the bytes copied (output, accumulated)
  * @return 0 on success or halted, -1 on failure
  */
 int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *bytes_copied_p) {
     char error_msg[STRING_LEN];
     struct stat stat_buf;
 
-    // Get source file size
-    if (stat(src_path, &stat_buf) < 0) {		
+    if (stat(src_path, &stat_buf) < 0) {
         snprintf(error_msg, sizeof(error_msg), "Failed to stat source file '%s'", src_path);
-   		fprintf(stderr, "ERROR: %s\n", error_msg);
-		return -1;
+        fprintf(stderr, "ERROR: %s\n", error_msg);
+        return -1;
     }
-	
+
     int src_fd = open(src_path, O_RDONLY);
     if (src_fd < 0) {
         snprintf(error_msg, sizeof(error_msg), "Failed to open source file '%s'", src_path);
-   		fprintf(stderr, "ERROR: %s\n", error_msg);
-		return -1;
+        fprintf(stderr, "ERROR: %s\n", error_msg);
+        return -1;
     }
+
+    // Hint to the kernel that we'll read this source sequentially.
+    // Cheap; ignored if unsupported.
+    posix_fadvise(src_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
 
     int dest_fd = open(dest_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (dest_fd < 0) {
         snprintf(error_msg, sizeof(error_msg), "Failed to open destination file '%s'", dest_path);
-   		fprintf(stderr, "ERROR: %s\n", error_msg);
+        fprintf(stderr, "ERROR: %s\n", error_msg);
         close(src_fd);
-		return -1;
+        return -1;
     }
 
-    char buffer[COPY_BUFFER_SIZE];
-    ssize_t bytes_read;
+    // Copy in ~1MB chunks so we can still respond to the halt flag between
+    // chunks. On a typical USB stick a 1MB chunk is 30-50ms of wall time.
+    const size_t CHUNK = 1024 * 1024;
+    off_t remaining = stat_buf.st_size;
+    bool use_fallback = false;
 
-    while ((bytes_read = read(src_fd, buffer, COPY_BUFFER_SIZE)) > 0) {
-		
-		if (*halt_p) return 0;
-		
-        if (write(dest_fd, buffer, bytes_read) != bytes_read) {
-            snprintf(error_msg, sizeof(error_msg), "Failed to write to '%s'", dest_path);
-			fprintf(stderr, "ERROR: %s\n", error_msg);
+    while (remaining > 0) {
+
+        if (*halt_p) {
             close(src_fd);
             close(dest_fd);
-			return -1;
+            return 0;
         }
-		
-		*bytes_copied_p += bytes_read; 	
+
+        size_t want = (remaining > (off_t)CHUNK) ? CHUNK : (size_t)remaining;
+
+        // sendfile returns bytes actually transferred, or -1 on error.
+        // NULL offset pointer = advance both file positions naturally.
+        ssize_t sent = sendfile(dest_fd, src_fd, NULL, want);
+
+        if (sent < 0) {
+            // EINVAL/ENOSYS can happen on some filesystem combinations.
+            // Fall back to read/write for this file.
+            if (errno == EINVAL || errno == ENOSYS) {
+                use_fallback = true;
+                break;
+            }
+            snprintf(error_msg, sizeof(error_msg),
+                     "sendfile failed '%s' -> '%s': %s",
+                     src_path, dest_path, strerror(errno));
+            fprintf(stderr, "ERROR: %s\n", error_msg);
+            close(src_fd);
+            close(dest_fd);
+            return -1;
+        }
+
+        if (sent == 0) {
+            // Source shorter than stat claimed - done.
+            break;
+        }
+
+        remaining -= sent;
+        *bytes_copied_p += sent;
     }
 
-    if (bytes_read < 0) {
-        snprintf(error_msg, sizeof(error_msg), "Failed to read from '%s'", src_path);
-   		fprintf(stderr, "ERROR: %s\n", error_msg);
-        close(src_fd);
-        close(dest_fd);
-		return -1;
-    }
+    // ---- Fallback path: kernel refused sendfile for this pair ----
+    if (use_fallback) {
+        // Seek both fds back to start and do a plain read/write loop.
+        if (lseek(src_fd, 0, SEEK_SET) == (off_t)-1 ||
+            lseek(dest_fd, 0, SEEK_SET) == (off_t)-1) {
+            fprintf(stderr, "ERROR: lseek failed during fallback copy of '%s'\n", src_path);
+            close(src_fd);
+            close(dest_fd);
+            return -1;
+        }
+        // Undo any bytes we attributed to the aborted sendfile attempt.
+        *bytes_copied_p -= (stat_buf.st_size - remaining);
 
-    if (fsync(dest_fd) == -1) {
-        snprintf(error_msg, sizeof(error_msg), "Failed to fsync '%s'", dest_path);
-   		fprintf(stderr, "ERROR: %s\n", error_msg);
-        close(src_fd);
-        close(dest_fd);
-		return -1;
+        char *buffer = malloc(CHUNK);
+        if (!buffer) {
+            fprintf(stderr, "ERROR: out of memory in copy_file fallback\n");
+            close(src_fd);
+            close(dest_fd);
+            return -1;
+        }
+
+        ssize_t bytes_read;
+        while ((bytes_read = read(src_fd, buffer, CHUNK)) > 0) {
+            if (*halt_p) {
+                free(buffer);
+                close(src_fd);
+                close(dest_fd);
+                return 0;
+            }
+            if (write(dest_fd, buffer, bytes_read) != bytes_read) {
+                snprintf(error_msg, sizeof(error_msg), "Failed to write to '%s'", dest_path);
+                fprintf(stderr, "ERROR: %s\n", error_msg);
+                free(buffer);
+                close(src_fd);
+                close(dest_fd);
+                return -1;
+            }
+            *bytes_copied_p += bytes_read;
+        }
+
+        free(buffer);
+
+        if (bytes_read < 0) {
+            snprintf(error_msg, sizeof(error_msg), "Failed to read from '%s'", src_path);
+            fprintf(stderr, "ERROR: %s\n", error_msg);
+            close(src_fd);
+            close(dest_fd);
+            return -1;
+        }
     }
 
     close(src_fd);
     close(dest_fd);
     return 0;
 }
+
 
 
 // Remove odd characters such as "?" from the filename as these cause errors if written to a FAT32 usb drive
@@ -403,12 +473,17 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 		
 		if (strlen(src_dir) + strlen(names[i]) + 2 >= PATH_LEN) {
 			fprintf(stderr, "ERROR: src_dir and names[i] is too long\n");			
+			return -1;
 		}
 			
+		#pragma GCC diagnostic push
+		#pragma GCC diagnostic ignored "-Wformat-truncation"			
 		snprintf(src_path, PATH_LEN, "%s/%s", src_dir, names[i]);
+		#pragma GCC diagnostic pop
 
 		if (strlen(dest_path) + strlen(names[i]) + 2 >= PATH_LEN) {
 			fprintf(stderr, "ERROR: dest_path and names[i] is too long\n");			
+			return -1;
 		}
 
 		// Remove any invalid characters such as "?" and "*" as these cause errors 
@@ -480,9 +555,7 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 
 // Initialize CRC-32 table
 void initialise_crc_table() {
-	
-	#define CRC32_POLY 0x04C11DB7	
-	
+		
     for (int i = 0; i < 256; i++) {
         uint32_t crc = i << 24;
         for (int j = 0; j < 8; j++) {
@@ -495,27 +568,31 @@ void initialise_crc_table() {
 
 
 
-// Compute CRC-32 checksum of a file. Only the first CRC_SIZE bytes are used.
 uint32_t compute_crc32(char *filename) {
-
     FILE *file = fopen(filename, "rb");
     if (!file) {
         fprintf(stderr, "VERIFY ERROR : Compute CRC cannot open file %s\n", filename);
-		return 0;
+        return 0;
     }
 
-    uint32_t crc = 0xFFFFFFFF;  // Initial CRC value
-	uint32_t crc_bytes = 0;
-    int byte;
+    uint32_t crc = 0xFFFFFFFF;
+    uint32_t crc_bytes = 0;
+    unsigned char buf[65536];
+    size_t n;
 
-    while (((byte = fgetc(file)) != EOF) && (crc_bytes < CRC_SIZE)) {
-		crc = (crc << 8) ^ crc32_table[((crc >> 24) ^ byte) & 0xFF];
-		crc_bytes++;
-	}
+    while (crc_bytes < CRC_SIZE &&
+           (n = fread(buf, 1, sizeof(buf), file)) > 0) {
+        if (crc_bytes + n > CRC_SIZE) {
+            n = CRC_SIZE - crc_bytes;
+        }
+        for (size_t i = 0; i < n; i++) {
+            crc = (crc << 8) ^ crc32_table[((crc >> 24) ^ buf[i]) & 0xFF];
+        }
+        crc_bytes += n;
+    }
 
-    crc ^= 0xFFFFFFFF;  // Final XOR
+    crc ^= 0xFFFFFFFF;
     fclose(file);
-	
     return crc;
 }
 

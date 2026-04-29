@@ -2,7 +2,6 @@
 #include "utilities.h"
 
 
-
 ChannelInfoStruct* client_info_p = NULL;
 SharedDataStruct* shared_data_p = NULL;
 int device_id = -1;
@@ -10,7 +9,6 @@ int shm_fd = -1;
 
 char buffer[STRING_LEN*2];
 extern uint32_t crc32_table[256];
-
 
 
 
@@ -27,7 +25,7 @@ void failed(char* errormessage) {
 		snprintf(temp_str, sizeof(temp_str), "ERROR: [%d] %s\n", device_id, errormessage);
 	}
 	
-    fprintf(stderr, temp_str);
+    fprintf(stderr, "%s", temp_str);
     
     if (client_info_p) {
         client_info_p->state = FAILED;
@@ -62,7 +60,7 @@ void parse_crc_file(const char *crc_line, char *filename, uint32_t *crc) {
     const char *tab = strstr(crc_line, "\t");
     if (!tab) {
         fprintf(stderr, "ERROR: No tab separator found in CRC file\n");
-		exit(0);
+		exit(1);
     }
 
     // Extract filename (before tab)
@@ -72,7 +70,7 @@ void parse_crc_file(const char *crc_line, char *filename, uint32_t *crc) {
 
     // Extract CRC (after tab)
     const char *crc_str = tab + 1; // Skip the tab
-    *crc = (unsigned int)strtoul(crc_str, NULL, 16); // Convert hex to unsigned int}
+    *crc = (unsigned int)strtoul(crc_str, NULL, 16); // Convert hex to unsigned int
 }
 
 
@@ -104,8 +102,8 @@ bool verify(char* partition_name, char *mount_point) {
 	{		
 		snprintf(buffer, sizeof(buffer), "mount %s %s >/dev/null", partition_name, mount_point);
 		if (execute_command(device_id, buffer, false) != 0) {
-			fclose(crc_file);
 			fprintf(stderr, "VERIFY ERROR: Unable to mount the USB drive\n");
+			fclose(crc_file);
 			return false;
 		}
 	}
@@ -128,6 +126,7 @@ bool verify(char* partition_name, char *mount_point) {
 					
 		if (expected_crc != actual_crc) {
 			fprintf(stderr, "VERIFY ERROR: CRC Invalid. File='%s'\n", filename);
+			fclose(crc_file);
 			return false;
 		}				
     }
@@ -141,6 +140,7 @@ bool verify(char* partition_name, char *mount_point) {
 	snprintf(buffer, sizeof(buffer), "sync %s", mount_point);
 	if (execute_command(device_id, buffer, false) != 0) {
 		fprintf(stderr, "VERIFY ERROR: Cannot sync device\n");
+		fclose(crc_file);
 		return false;
 	}
 
@@ -148,14 +148,13 @@ bool verify(char* partition_name, char *mount_point) {
 	snprintf(buffer, sizeof(buffer), "umount %s", mount_point);
 	if (execute_command(device_id, buffer, false) != 0) {
 		fprintf(stderr, "VERIFY ERROR: Cannot unmount device\n");
+		fclose(crc_file);
 		return false;
 	}
 
 	printf("[%d] Finished\n", device_id);
-
+	
 	fclose(crc_file);
-
-
 	return true;
 }
 
@@ -235,7 +234,7 @@ int main(int argc, char *argv[]) {
 	
     // Step 0: Get the name of the mount point
 	// i.e. if device name is /dev/sda then the mount point will be /mnt/usb/sda1
-	char mount_point[STRING_LEN];
+	char mount_point[30];
 	const char* last_slash = strrchr(client_info_p->device_name, '/');
 	if (!last_slash)
 	{
@@ -246,12 +245,9 @@ int main(int argc, char *argv[]) {
     snprintf(mount_point, sizeof(mount_point), "%s/%s1", MOUNT_POINT, last_slash+1);	
 	
 	// Append 1 to the device name to get the partition name, i.e. /dev/sdb1
-	char partition_name[STRING_LEN];
-	strncpy(partition_name, client_info_p->device_name, STRING_LEN);
-	strncat(partition_name, "1", STRING_LEN-1);
-
+	char partition_name[257];
+	snprintf(partition_name, sizeof(partition_name), "%s1", client_info_p->device_name);	
 	printf("[%d] Mount Point=%s Partition=%s\n", device_id, mount_point, partition_name);
-
 
 	// Step 1: Unmount the device if it is already mounted (it shouldn't be)
 	client_info_p->state = STARTING;
@@ -264,11 +260,13 @@ int main(int argc, char *argv[]) {
 		execute_command(device_id, buffer, true); // Ignore errors if not mounted
 	}
 
+#if PARTITION
 	// Step 2: Get the size of the device
-    uint64_t device_size;
+    uint64_t device_size = 0;
     int fd = open(client_info_p->device_name, O_RDONLY);
     if (fd >= 0) {
 		ioctl(fd, BLKGETSIZE64, &device_size);
+		close(fd);
 	}
 	printf("Device Size=%lu\n", device_size);
     
@@ -308,7 +306,9 @@ int main(int argc, char *argv[]) {
 			failed("Creating primary partition");
 		}
 	}
+#endif
 
+#if FORMAT
     // Step 5: Format the partition as FAT32
 	if (!client_info_p->halt)
 	{
@@ -318,6 +318,7 @@ int main(int argc, char *argv[]) {
 			failed("Formatting partition");
 		}
 	}
+#endif
 
     // Step 6: Create mount point if it doesn't exist/
 	if (!client_info_p->halt)
@@ -338,6 +339,17 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
+#if !FORMAT
+	if (!client_info_p->halt)
+	{
+		client_info_p->state = ERASING;
+		snprintf(buffer, sizeof(buffer), "rm -rf %s/{*,.*}", mount_point);
+		if (execute_command(device_id, buffer, false) != 0) {
+			failed("deleting files");
+		}
+	}
+#endif
+
     // Step 8: Copy all files from Ramdrive to the USB drive, alphabetically sorted
 	if (!client_info_p->halt)
 	{	
@@ -354,7 +366,7 @@ int main(int argc, char *argv[]) {
 	snprintf(buffer, sizeof(buffer), "sync %s", mount_point);
 	if (execute_command(device_id, buffer, false) != 0) {
 		fprintf(stderr, "VERIFY ERROR: Cannot sync device\n");
-		return false;
+		return 1;
 	}
 
 	snprintf(buffer, sizeof(buffer), "umount %s", mount_point);
@@ -362,8 +374,8 @@ int main(int argc, char *argv[]) {
 		failed("Unmounting drive");
 	}
 
-// Step 10: Verify all files have been written (Optional)
 #if VERIFY
+	// Step 10: Verify all files have been written (Optional)
 	if (!client_info_p->halt) {
 		client_info_p->state = VERIFYING;
 		bool crc_ok = verify(partition_name, mount_point);
