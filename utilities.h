@@ -10,9 +10,20 @@ int execute_command(const int device_id, const char *cmd, const bool ignore_erro
 
 uint64_t get_directory_size(const char *path);
 
-int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *bytes_copied_p);
-
-int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_t *bytes_copied_p);
+/*
+ * Optional progress callback invoked by copy_directory / copy_file as each
+ * file starts copying. Pass NULL to disable.
+ *
+ * `filename` is the bare leaf name (no path), suitable for short displays.
+ * Callback runs synchronously on the calling thread, so keep it cheap.
+ */
+typedef void (*copy_progress_cb)(const char *filename);
+ 
+int copy_file(const char *src_path, const char *dest_path,
+              bool *halt_p, off_t *bytes_copied_p);
+ 
+int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, 
+				off_t *bytes_copied_p, copy_progress_cb progress_cb);
 
 void print_shared_data(const SharedDataStruct* shared_data_p);
 

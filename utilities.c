@@ -203,10 +203,12 @@ int compare_names(const void *a, const void *b) {
  * @param bytes_copied_p Pointer to store the bytes copied (output, accumulated)
  * @return 0 on success or halted, -1 on failure
  */
-int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *bytes_copied_p) {
+int copy_file(const char *src_path, const char *dest_path,
+              bool *halt_p, off_t *bytes_copied_p) {
+	
     char error_msg[STRING_LEN];
     struct stat stat_buf;
-
+	
     if (stat(src_path, &stat_buf) < 0) {
         snprintf(error_msg, sizeof(error_msg), "Failed to stat source file '%s'", src_path);
         fprintf(stderr, "ERROR: %s\n", error_msg);
@@ -387,7 +389,9 @@ void shorten_filename(char *filename, size_t max_len) {
  * @param crc_file handle for storing the name and CRC for the file being copied. Set to NULL if not required
  * @return 0 on success or halted, -1 on failure
  */
-int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_t *bytes_copied_p) {
+int copy_directory(const char *src_dir, const char *dest_dir, 
+				   bool* halt_p, off_t *bytes_copied_p,
+                   copy_progress_cb progress_cb) {
 	
     char error_msg[600];
 
@@ -506,6 +510,13 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 		if (*halt_p) return 0;
 
         if (S_ISREG(stat_buf.st_mode)) {
+			
+            // Notify the caller which file we're about to copy.
+            // dest_name is the sanitised + shortened leaf, ideal for an LCD.
+            if (progress_cb) {
+                progress_cb(dest_name);
+            }
+			
             if (copy_file(src_path, dest_path, halt_p, bytes_copied_p) < 0) {
                 snprintf(error_msg, sizeof(error_msg), "Failed to copy file: '%s' -> '%s'", src_path, dest_path);
 				fprintf(stderr, "ERROR: %s\n", error_msg);
@@ -539,7 +550,7 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 		if (*halt_p) return 0;
 	
         if (S_ISDIR(stat_buf.st_mode)) {
-            if (copy_directory(src_path, dest_path, halt_p, bytes_copied_p) < 0) {
+            if (copy_directory(src_path, dest_path, halt_p, bytes_copied_p, progress_cb) < 0) {
                 snprintf(error_msg, sizeof(error_msg), "Failed to copy subdirectory '%s'", src_path);
 				fprintf(stderr, "ERROR: %s\n", error_msg);
 				return -1;

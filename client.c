@@ -355,7 +355,7 @@ int main(int argc, char *argv[]) {
 	{	
 		printf("[%d] Copying files\n", device_id);
 		client_info_p->state = COPYING;
-		if (copy_directory(RAMDIR_PATH, mount_point, &client_info_p->halt, &client_info_p->bytes_copied) != 0) {
+		if (copy_directory(RAMDIR_PATH, mount_point, &client_info_p->halt, &client_info_p->bytes_copied, NULL) != 0) {
 			failed("Copying files");
 		}
 	}

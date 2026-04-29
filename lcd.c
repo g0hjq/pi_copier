@@ -181,6 +181,32 @@ void lcd_init(SharedDataStruct* shared_data_p)
 }
 
 
+
+// Internal: write up to 4 lines, each centred on a 20-column row.
+// NULL lines are skipped (existing content preserved).
+// Caller must hold lcd_mutex.
+static void lcd_write_centred_lines(const char* lines[LCD_ROWS])
+{
+    char buf[LCD_COLS + 1];
+ 
+    for (int i = 0; i < LCD_ROWS; i++) {
+        if (!lines[i]) continue;
+ 
+        size_t len = strlen(lines[i]);
+        if (len > LCD_COLS) len = LCD_COLS;
+        int padding = (int)((LCD_COLS - len) / 2);
+ 
+        // Space-fill, then drop the (possibly truncated) text into the
+        // centre with memcpy - no embedded NULs, no re-padding needed.
+        memset(buf, ' ', LCD_COLS);
+        memcpy(buf + padding, lines[i], len);
+        buf[LCD_COLS] = '\0';
+ 
+        lcd_write_string_no_lock(buf, i);
+    }
+}
+ 
+ 
 // Display up to 4 lines, each centred on a 20-column row.
 // NULL lines are skipped (left untouched).
 //
@@ -195,32 +221,36 @@ void lcd_display_message(const char* line0,
                          const char* line3)
 {
     const char* lines[LCD_ROWS] = {line0, line1, line2, line3};
-    char buf[LCD_COLS + 1];
-
+ 
     pthread_mutex_lock(&lcd_mutex);
-
+ 
     lcd_send_byte(LCD_CLEAR, 0);
-    usleep(250000);  // deliberate flash - lock held to protect the sequence
-
-    for (int i = 0; i < LCD_ROWS; i++) {
-        if (!lines[i]) continue;
-
-        size_t len = strlen(lines[i]);
-        if (len > LCD_COLS) len = LCD_COLS;
-        int padding = (int)((LCD_COLS - len) / 2);
-
-        // Space-fill, then drop the (possibly truncated) text into the
-        // centre with memcpy - no embedded NULs, no re-padding needed.
-        memset(buf, ' ', LCD_COLS);
-        memcpy(buf + padding, lines[i], len);
-        buf[LCD_COLS] = '\0';
-
-        lcd_write_string_no_lock(buf, i);
-    }
-
+    usleep(200000);  // deliberate flash - lock held to protect the sequence 
+    lcd_write_centred_lines(lines);
     pthread_mutex_unlock(&lcd_mutex);
 }
-
+ 
+ 
+ 
+// Same as lcd_display_message but without the clear-and-flash. Lines are
+// rewritten in place. Use for frequent progress updates where flashing
+// the screen on every call would be visually noisy and slow.
+//
+// NULL lines leave the existing row content untouched.
+void lcd_display_message_no_flash(const char* line0,
+                                  const char* line1,
+                                  const char* line2,
+                                  const char* line3)
+{
+    const char* lines[LCD_ROWS] = {line0, line1, line2, line3};
+ 
+    pthread_mutex_lock(&lcd_mutex);
+    lcd_write_centred_lines(lines);
+    pthread_mutex_unlock(&lcd_mutex);
+}
+ 
+ 
+ 
 
 // Display a bargraph for values 0..100 on the given row.
 void lcd_display_bargraph(int value, int row)

@@ -357,6 +357,67 @@ void test_leds() {
 }
 
 
+// LCD progress callback used while loading the master from a USB stick.
+// copy_directory invokes this once per file, with the leaf filename.
+//
+// Layout on the 20x4 LCD:
+//   row 0: "Reading Master" (header, kept across calls)
+//   rows 1-3: filename, wrapped mid-word every 20 columns
+//
+// If the filename is longer than 60 characters (3 full rows of 20), it is
+// truncated from the middle: a fixed prefix + "..." + a fixed suffix that
+// preserves the file extension.
+//
+// HD44780 has no Unicode ellipsis, so plain ASCII "..." is used.
+static void load_master_progress(const char *filename) {
+    char display[61];   // 60 visible chars + null
+    const size_t MAX_VIS = 60;
+
+    if (!filename) filename = "";
+    size_t len = strlen(filename);
+
+    if (len <= MAX_VIS) {
+        memcpy(display, filename, len);
+        display[len] = '\0';
+    } else {
+        // Middle-truncate: <prefix> "..." <suffix>
+        // Total visible = prefix + 3 + suffix = 60  =>  prefix + suffix = 57
+        // Split fairly evenly, slightly favouring the suffix so the
+        // file extension survives. 28 + 29 = 57.
+        const size_t prefix_len = 28;
+        const size_t suffix_len = 29;
+        memcpy(display, filename, prefix_len);
+        memcpy(display + prefix_len, "...", 3);
+        memcpy(display + prefix_len + 3, filename + len - suffix_len, suffix_len);
+        display[60] = '\0';
+    }
+
+    // Slice into three 20-char rows. lcd_display_message pads short rows
+    // with spaces, so trailing nulls are fine.
+    char row1[21] = {0};
+    char row2[21] = {0};
+    char row3[21] = {0};
+    size_t shown = strlen(display);
+
+    size_t take = shown > 20 ? 20 : shown;
+    memcpy(row1, display, take);
+
+    if (shown > 20) {
+        size_t remaining = shown - 20;
+        take = remaining > 20 ? 20 : remaining;
+        memcpy(row2, display + 20, take);
+    }
+    if (shown > 40) {
+        size_t remaining = shown - 40;
+        take = remaining > 20 ? 20 : remaining;
+        memcpy(row3, display + 40, take);
+    }
+
+    lcd_display_message_no_flash("Reading Master", row1, row2, row3);
+}
+
+
+
 
 // Prompts the user to insert the master USB in slot one. 
 // Recursively copies all files to the ramdrive
@@ -422,7 +483,7 @@ int load_master() {
 	
 	shared_data_p->total_size = 0;
 	bool halt = false;
-	if (copy_directory(mount_point, RAMDIR_PATH, &halt, &shared_data_p->total_size) != 0) {
+	if (copy_directory(mount_point, RAMDIR_PATH, &halt, &shared_data_p->total_size, load_master_progress) != 0) {
 		fprintf(stderr, "ERROR: copy_directory failed\n");
         return 1;
 	}

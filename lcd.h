@@ -54,6 +54,11 @@ void lcd_display_message(const char* line0,
                          const char* line2,
                          const char* line3);
 
+void lcd_display_message_no_flash(const char* line0,
+                         const char* line1,
+                         const char* line2,
+                         const char* line3);
+
 void lcd_display_error_message(const char* message1, const char* message2);
 
 // Draw a horizontal bargraph on `row` for a value in the range [0, 100].
