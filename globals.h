@@ -34,7 +34,7 @@
 #include <pthread.h>
 
 
-#define VERSION_STRING "v1.3.0 " __DATE__
+#define VERSION_STRING "v1.5.0 " __DATE__
 #define VERIFY true
 #define CRC_SIZE 1*1024*1024   // CRCs will only be generated and checked for the first 1MB in each file
 
@@ -54,7 +54,7 @@
 // filesystem that stays writable under the standard overlay setup.
 #define PORT_MAP_FILE "/boot/firmware/usb_copier_port_map.conf"
 
-	
+s	
 #define MAX_FILES 1024      // Maximum number of files/directories per directory
 #define COPY_BUFFER_SIZE 65536  // Buffer size for file copying
 #define STRING_LEN 256        // general name string length
