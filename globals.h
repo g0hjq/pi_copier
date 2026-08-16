@@ -45,6 +45,14 @@
 #define CRC_FILE "/var/ramdrive/crc.txt"
 #define FFMPEG_FILTERS "agate=mode=downward:ratio=1.2, silenceremove=start_periods=1:start_threshold=-35dB:start_silence=0.7, loudnorm=I=-18:TP=-2:LRA=7"
 #define NUMBER_OF_FFMPEG_THREADS 4
+#define MASTER_LABEL_KEYWORD "MASTER"   // a USB volume in slot 0 whose label contains this (case-insensitive) triggers a master reload
+
+// The USB port map must survive a reboot even when the root filesystem is running
+// under Raspberry Pi's overlay feature, where /var and the rest of the root filesystem
+// are backed by a RAM-based upper layer that's silently discarded on every reboot -
+// writes there succeed but never persist. /boot/firmware is a real, separately-mounted
+// filesystem that stays writable under the standard overlay setup.
+#define PORT_MAP_FILE "/boot/firmware/usb_copier_port_map.conf"
 
 	
 #define MAX_FILES 1024      // Maximum number of files/directories per directory
@@ -123,6 +131,9 @@ typedef struct {
 	off_t total_size;    // total size of all files
 	ChannelInfoStruct channel_info[MAX_USB_CHANNELS];
 	uint32_t channels_active;
+	bool master_reload_requested;      // set by the usb monitor thread, consumed+cleared by the main loop
+	int master_device_id;              // slot index (0..MAX_USB_CHANNELS-1) the new master was found in
+	char master_device_name[STRING_LEN]; // e.g. "/dev/sdc" - device carrying the new master data
 } SharedDataStruct;
 
 

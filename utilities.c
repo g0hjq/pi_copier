@@ -114,39 +114,6 @@ void trim(char *str) {
 
 
 /**
- * Extract just the usb route (3-1.3:1.0) part from the usb path, e.g.
- *  /sys/devices/platform/axi/1000120000.pcie/1f00300000.usb/xhci-hcd.1/
- *     usb3/3-1/3-1.3/3-1.3:1.0/host1/target1:0:0/1:0:0:0/block/sdb
- */
-void extract_usb_path(const char *input, char *output) {
-    // Initialize output as empty
-    output[0] = '\0';
-
-    // Find "/host"
-    const char *host = strstr(input, "/host");
-
-    // Move backward to find the start of the component (previous ':')
-    const char *end = host;
-    while (end > input && *end != ':') {
-        end--; // Move back until we hit a ':'
-    }
-
-
-    // Find the start of the component
-    const char *start = end;
-    while (start > input && *(start - 1) != '/') {
-        start--; // Move back until we hit a '/'
-    }
-
-    // Copy the component (e.g., "3-1.3:1.0")
-    size_t length = end - start;
-    strncpy(output, start, length);
-    output[length] = '\0';
-}
-
-
-
-/**
  * Function to execute shell commands and check for errors
  */
 int execute_command(const int device_id, const char *cmd, const bool ignore_errors) {
@@ -517,5 +484,40 @@ uint32_t compute_crc32(char *filename) {
     fclose(file);
 	
     return crc;
+}
+
+
+
+// Reads the filesystem LABEL of a partition device (e.g. "/dev/sdc1") using blkid.
+// Returns true and fills label_out with a null-terminated label if one was found,
+// false (with label_out left as an empty string) otherwise.
+bool get_volume_label(const char *partition_name, char *label_out, size_t label_out_size) {
+
+	label_out[0] = '\0';
+
+	char cmd[PATH_LEN];
+	snprintf(cmd, sizeof(cmd), "sudo blkid -s LABEL -o value %s 2>/dev/null", partition_name);
+
+	FILE *fp = popen(cmd, "r");
+	if (!fp) {
+		fprintf(stderr, "ERROR: get_volume_label: popen failed for %s\n", partition_name);
+		return false;
+	}
+
+	bool got_line = (fgets(label_out, label_out_size, fp) != NULL);
+	pclose(fp);
+
+	if (!got_line) {
+		label_out[0] = '\0';
+		return false;
+	}
+
+	// Strip the trailing newline fgets leaves in place
+	size_t len = strlen(label_out);
+	if (len > 0 && label_out[len-1] == '\n') {
+		label_out[len-1] = '\0';
+	}
+
+	return (label_out[0] != '\0');
 }
 

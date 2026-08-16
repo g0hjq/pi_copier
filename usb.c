@@ -17,27 +17,6 @@ static SharedDataStruct* shared_data_p;
 
 
 
-// Returns -1 if the name is invalid
-int get_device_id_from_name(SharedDataStruct* shared_data_p, char* path)
-{
-	// Scan all usb ports looking for a matching device path.
-	for (int device_id=0; device_id<shared_data_p->channels_active; device_id++)
-	{
-		const ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[device_id];
-		if (strcmp(channel_info_p->device_path, path) == 0)
-		{
-			// Found it
-			return device_id;
-		}		
-	}
-	
-	//fprintf(stderr, "get_device_id_from_name: name not found. Path=%s\n", path);
-	return -1;
-}
-
-
-
-
 // Returns -1 if the path is invalid
 int32_t get_device_id_from_path(SharedDataStruct* shared_data_p, char* path)
 {
@@ -54,6 +33,112 @@ int32_t get_device_id_from_path(SharedDataStruct* shared_data_p, char* path)
 	
 	//fprintf(stderr, "get_device_id_from_path: path not found. Path=%s\n", path);
 	return -1;
+}
+
+
+
+
+// Reads the label of a device's first partition and returns true if it contains
+// MASTER_LABEL_KEYWORD (case-insensitive). The partition node can take a moment to
+// appear after the disk itself shows up, so retry for up to 5 seconds rather than
+// missing it on a single poll cycle.
+static bool device_has_master_label(const char *device_name) {
+
+	char partition_name[STRING_LEN];
+	snprintf(partition_name, sizeof(partition_name), "%s1", device_name);
+
+	char label[STRING_LEN];
+
+	const int retry_interval_us = 200000;         // 200ms
+	const int max_wait_us = 5000000;               // 5 seconds
+	const int max_attempts = max_wait_us / retry_interval_us;
+
+	for (int attempt = 0; attempt < max_attempts; attempt++) {
+		if (get_volume_label(partition_name, label, sizeof(label))) {
+			return (strcasestr(label, MASTER_LABEL_KEYWORD) != NULL);
+		}
+		usleep(retry_interval_us);
+	}
+
+	return false;
+}
+
+
+// If the newly-seen device is in slot 0 (socket 1) and labelled as a master, reserve
+// its slot (so run() never treats it as a duplication target) and flag the main loop
+// to reload the master data. Slot 0 only - other slots are ignored even if labelled MASTER.
+static void check_for_master_label(SharedDataStruct* shared_data_p, int device_id,
+                                    const char* device_name, ChannelInfoStruct* client_info_p) {
+
+	if (device_id != 0) {
+		return;
+	}
+
+	if (shared_data_p->master_reload_requested) {
+		// A reload is already pending or in progress - don't stomp on it.
+		return;
+	}
+
+	if (!device_has_master_label(device_name)) {
+		return;
+	}
+
+	printf("Master label detected on %s (slot 0)\n", device_name);
+
+	client_info_p->state = INDICATING; // reserve the slot - keeps run() from ever using it as a target
+
+	snprintf(shared_data_p->master_device_name, sizeof(shared_data_p->master_device_name), "%s", device_name);
+	shared_data_p->master_device_id = device_id;
+	shared_data_p->master_reload_requested = true;
+}
+
+
+
+
+// Finds the /dev/disk/by-path/ entry name that resolves to the given whole-disk kernel
+// device (e.g. "sda"). This name is built by udev's own topology-based path_id logic,
+// which deliberately excludes the kernel-assigned bus number (the "1-" in "1-1.1.4") -
+// that number isn't fixed, since modern kernels probe USB controllers asynchronously
+// at boot and can assign it differently run to run. The physical port-chain portion
+// is stable, but relying on the bus number prefix alongside it is what was causing the
+// mapping to occasionally shift between reboots. by-path avoids that entirely.
+// Returns true and fills id_path_out with the entry name on success.
+static bool get_disk_by_path_id(const char *kernel_name, char *id_path_out, size_t out_size) {
+
+	id_path_out[0] = '\0';
+
+	DIR *dir = opendir("/dev/disk/by-path");
+	if (!dir) {
+		return false;
+	}
+
+	char expected_target[PATH_LEN];
+	snprintf(expected_target, sizeof(expected_target), "../../%s", kernel_name);
+
+	struct dirent *ent;
+	bool found = false;
+
+	while ((ent = readdir(dir)) != NULL) {
+		if (ent->d_name[0] == '.') continue;
+
+		char link_path[PATH_LEN];
+		snprintf(link_path, sizeof(link_path), "/dev/disk/by-path/%s", ent->d_name);
+
+		char target[STRING_LEN];
+		ssize_t len = readlink(link_path, target, sizeof(target)-1);
+		if (len == -1) continue;
+		target[len] = '\0';
+
+		// Only match the whole-disk entry (e.g. "../../sda"), not a partition ("../../sda1")
+		if (strcmp(target, expected_target) == 0) {
+			snprintf(id_path_out, out_size, "%s", ent->d_name);
+			found = true;
+			break;
+		}
+	}
+
+	closedir(dir);
+	return found;
 }
 
 
@@ -77,7 +162,6 @@ void *monitor_usb_drives_thread_function(void* arg) {
 
     printf("Monitoring for USB drive events in thread...\n");
     char path[PATH_LEN];
-    char link_path[PATH_LEN];
 	char buff[STRING_LEN];
 	struct dirent *ent;
 
@@ -115,26 +199,29 @@ void *monitor_usb_drives_thread_function(void* arg) {
 
 			fclose(f);
 
-			// Resolve the symbolic link to get the USB port path
-            snprintf(path, sizeof(path), "/sys/block/%.60s", ent->d_name);
-            ssize_t len = readlink(path, link_path, sizeof(link_path) - 1);
-            if (len == -1) {
-                perror("Failed to read symbolic link");
-                continue;
-            }
-            link_path[len] = '\0'; // Null-terminate the string
+			// Get the USB device's name (i.e. /dev/sda) and a stable topology identifier
+			// for it via /dev/disk/by-path (not the raw kernel busnum-based path, since
+			// that number itself isn't guaranteed stable across reboots)
+			snprintf(device_name, sizeof(device_name), "/dev/%.60s", ent->d_name);
 
-			// Get the USB Devices name (i.e. sda) and path (i.e. 3/1.2.3)			
-			snprintf(device_name, sizeof(device_name), "/dev/%.60s", ent->d_name);			
-			extract_usb_path(link_path, device_path);
-			device_path[sizeof(device_path)-1] = 0;
-			
+			if (!get_disk_by_path_id(ent->d_name, device_path, sizeof(device_path))) {
+				// udev may not have finished creating the by-path symlink for a
+				// freshly-inserted device yet - just try again on the next scan.
+				continue;
+			}
+				
 			int32_t device_id = get_device_id_from_path(shared_data_p, device_path);
 			//printf("detected usb device id %u: name=%s, path=%s\n", 
 			//	device_id, device_name, device_path);
 			
 			if (device_id < 0) {				
 				// We've not seen this port before. Add it as the highest numbered port.
+				if (shared_data_p->channels_active >= MAX_USB_CHANNELS) {
+					fprintf(stderr, "WARNING: Ignoring USB device beyond MAX_USB_CHANNELS. path=%s, name=%s\n",
+						device_path, device_name);
+					continue;
+				}
+
 				device_id = shared_data_p->channels_active;
 				printf("add new usb device. id=%u, path=%s, name=%s\n", 
 					device_id, device_path, device_name);
@@ -145,6 +232,8 @@ void *monitor_usb_drives_thread_function(void* arg) {
 				client_info_p->state = READY;
 				usb_present[device_id] = true;
 				shared_data_p->channels_active++;
+
+				check_for_master_label(shared_data_p, device_id, device_name, client_info_p);
 			}
 			else {
 				ChannelInfoStruct *client_info_p = &shared_data_p->channel_info[device_id];
@@ -156,6 +245,8 @@ void *monitor_usb_drives_thread_function(void* arg) {
 					
 					strcpy(client_info_p->device_name, device_name);
 					client_info_p->state = READY;					
+
+					check_for_master_label(shared_data_p, device_id, device_name, client_info_p);
 				}	
 				usb_present[device_id] = true;
 			}			

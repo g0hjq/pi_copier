@@ -75,6 +75,7 @@ void* ffmpeg_thread_function(void* arg)
 		return(NULL);
 	}
 	
+	printf("*******run_ffmpeg(%s) ....STARTING\n", mp3_file);
 
 	// run ffmpeg. output in 128K mono
 	snprintf(buffer2, sizeof(buffer2), 
@@ -104,7 +105,7 @@ void* ffmpeg_thread_function(void* arg)
 	}
 		
 
-	snprintf(buffer2, sizeof(buffer), "mv \"%s\" \"%s\"", temp_file, mp3_file);		
+	snprintf(buffer2, sizeof(buffer2), "mv \"%s\" \"%s\"", temp_file, mp3_file);		
 	if (execute_command(-1, buffer2, false) != 0) {
 		fprintf(stderr, "ERROR renaming %s to %s\n", temp_file, mp3_file);
 	}
@@ -149,10 +150,22 @@ int process_all_mp3_files(const char *dir_path) {
 	// Get the path of each file in the directory
     while ((entry = readdir(dir))) {			
         if (entry->d_type != DT_DIR && is_mp3(entry->d_name)) {				
+            if (ffmpeg_file_count >= MAX_FILES) {
+				fprintf(stderr, "ERROR: Too many mp3 files in '%s' (max %d)\n", dir_path, MAX_FILES);
+				break;
+			}
             snprintf(mp3_file, sizeof(mp3_file), "%s/%s", dir_path, entry->d_name);
 			filenames[ffmpeg_file_count] = strdup(mp3_file);
 			ffmpeg_file_count++;
 		}
+	}
+		
+	printf("Found %d mp3 file(s) to optimise in %s\n", ffmpeg_file_count, dir_path);
+	
+	if (ffmpeg_file_count == 0) {
+		closedir(dir);
+		sem_destroy(&ffmpeg_sem);
+		return 0;
 	}
 		
 		
@@ -265,13 +278,19 @@ void generate_crcs(char* path, FILE *crc_file) {
 //------------------------------------------------------------------------------------------------
 
 
+// Tracks the pid of the client process running for each device_id (0 = none running).
+// Used to reap finished clients by their exact pid, so we never interfere with the
+// waitpid() that system() (used by execute_command()) does for its own children.
+static pid_t client_pid[MAX_USB_CHANNELS] = {0};
+
+
 // Starts a new client program in a seperate Linux process
 // Returns the pid of the new process or -1 if error
 int start_process(int device_id) {
 		
 	printf("Start client process for device number %d \n", device_id);
 	
-	if ((device_id < 0) || (device_id > MAX_USB_CHANNELS)) {
+	if ((device_id < 0) || (device_id >= MAX_USB_CHANNELS)) {
 		fprintf(stderr, "ERROR: Start_processs: device_id %d invalid\n", device_id);
 		exit(1);
 	}
@@ -286,7 +305,8 @@ int start_process(int device_id) {
 	} 
 	else if (pid != 0)
 	{
-		// Parent process. Do nothing and just continue
+		// Parent process. Remember the pid so we can reap it once it exits.
+		client_pid[device_id] = pid;
 	} 
 	else {
 		// Client process
@@ -317,6 +337,30 @@ int start_process(int device_id) {
 	}
 	
 	return pid;
+}
+
+
+// Reaps any client processes that have finished, by their exact pid, so they don't
+// accumulate as zombies. Only ever waits on a specific known pid (never -1/WNOHANG on
+// "any child"), so this can never race with or steal the exit status that system()
+// (used internally by execute_command()) is waiting on for its own child.
+void reap_finished_clients(void) {
+	for (int device_id = 0; device_id < MAX_USB_CHANNELS; device_id++) {
+		if (client_pid[device_id] == 0) {
+			continue;
+		}
+		int status;
+		pid_t result = waitpid(client_pid[device_id], &status, WNOHANG);
+		if (result == client_pid[device_id]) {
+			// Client has exited - reaped.
+			client_pid[device_id] = 0;
+		}
+		else if (result == -1) {
+			// Gone already or otherwise no longer waitable - stop tracking it.
+			client_pid[device_id] = 0;
+		}
+		// result == 0 means still running - leave it tracked.
+	}
 }
 
 
@@ -352,42 +396,27 @@ void test_leds() {
 
 
 
-// Prompts the user to insert the master USB in slot one. 
-// Recursively copies all files to the ramdrive
-int load_master() {
-	
-	lcd_display_message(NULL, "Insert Master", "in slot 1", NULL);
-	set_all_states(EMPTY);
-	set_state(0, INDICATING);
+// Mounts the given device's first partition, wipes the ramdrive, and copies every file
+// from the device onto the ramdrive. Always attempts to unmount before returning.
+// Returns 0 on success, non-zero on failure.
+static int copy_master_to_ramdrive(const char* device_name, off_t* total_size_out) {
 
-	ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[0];
-
-	// Wait for USB inserted
-	printf("Waiting for master USB to be inserted\n");
-	while(channel_info_p->device_name[0] == '\0') {
-		usleep(100000);
-	}
-	
-	printf("found master : name=%s path=%s\n", channel_info_p->device_name, channel_info_p->device_path);
-	
-	set_state(0, COPYING);
-	lcd_display_message("Reading Master", NULL, channel_info_p->device_name, channel_info_p->device_path);
-	
-    // Choose the name of the mount point. 
+    // Choose the name of the mount point.
 	// If device name is /dev/sda, the mount point will be /mnt/usb/sda1
 	char mount_point[STRING_LEN];
-	const char* last_slash = strrchr(channel_info_p->device_name, '/');
+	const char* last_slash = strrchr(device_name, '/');
 	if (!last_slash)
 	{
-		fprintf(stderr, "ERROR: device_name '%s' is not in expected format\n", channel_info_p->device_name);
+		fprintf(stderr, "ERROR: device_name '%s' is not in expected format\n", device_name);
 		return 1;
 	}		
     snprintf(mount_point, sizeof(mount_point), "%s/%s1", MOUNT_POINT, last_slash+1);	
 	
 	// Append '1' to the device name to get the partition name, i.e. /dev/sdb1
 	char partition_name[STRING_LEN];
-	strncpy(partition_name, channel_info_p->device_name, STRING_LEN);
-	strncat(partition_name, "1", STRING_LEN-1);
+	strncpy(partition_name, device_name, STRING_LEN-1);
+	partition_name[STRING_LEN-1] = '\0';
+	strncat(partition_name, "1", STRING_LEN - strlen(partition_name) - 1);
 	printf("Mount Point=%s Partition=%s\n", mount_point, partition_name);
 
 
@@ -411,24 +440,30 @@ int load_master() {
     snprintf(buffer, sizeof(buffer), "sudo rm -rf %s/*", RAMDIR_PATH);
 	if (execute_command(-1, buffer, false) != 0) {
 		fprintf(stderr, "ERROR: empty_directory failed\n");
+		snprintf(buffer, sizeof(buffer), "sudo umount %s", mount_point);
+		execute_command(-1, buffer, true);
         return 1;
 	}
 
 	
-	shared_data_p->total_size = 0;
+	*total_size_out = 0;
 	bool halt = false;
-	if (copy_directory(mount_point, RAMDIR_PATH, &halt, &shared_data_p->total_size) != 0) {
+	printf("Copying master files from %s to %s (this can take a while for large libraries)...\n",
+		mount_point, RAMDIR_PATH);
+	if (copy_directory(mount_point, RAMDIR_PATH, &halt, total_size_out) != 0) {
 		fprintf(stderr, "ERROR: copy_directory failed\n");
+		snprintf(buffer, sizeof(buffer), "sudo umount %s", mount_point);
+		execute_command(-1, buffer, true);
         return 1;
 	}
 
-	printf("Total Size=%lu\n", shared_data_p->total_size);
+	printf("Total Size=%lu\n", *total_size_out);
 
     // Unmount the USB drive
 	snprintf(buffer, sizeof(buffer), "sync %s", mount_point);
 	if (execute_command(-1, buffer, false) != 0) {
-		fprintf(stderr, "VERIFY ERROR: Cannot sync device\n");
-		return false;
+		fprintf(stderr, "ERROR: Cannot sync device\n");
+		return 1;
 	}
 	
 	snprintf(buffer, sizeof(buffer), "sudo umount %s", mount_point);
@@ -437,8 +472,209 @@ int load_master() {
 		return 1;
 	}
 
+	return 0;
+}
+
+
+// Re-encodes every mp3 on the ramdrive and (re)writes crc.txt to match. Returns 0 on success.
+// Caller is responsible for showing an appropriate "please wait" message before calling this.
+static int optimize_and_generate_crcs(void) {
+
+	process_all_mp3_files(RAMDIR_PATH);
+
+	lcd_display_message("Calculating", "Checksums", NULL, NULL);
+
+	initialise_crc_table();
+	FILE *crc_file = fopen(CRC_FILE, "w");
+	if (!crc_file) {
+		fprintf(stderr, "ERROR: Cannot create CRC file %s\n", CRC_FILE);
+		return 1;
+	}
+
+	generate_crcs(RAMDIR_PATH, crc_file);
+	printf("Generate CRCs finished\n");
+
+	if (fclose(crc_file) == -1) {
+		perror("close crc_file");
+		return 1;
+	}
 
 	return 0;
+}
+
+
+// Prompts the user to insert the master USB in slot one. 
+// Recursively copies all files to the ramdrive
+int load_master() {
+	
+	lcd_display_message(NULL, "Insert Master", "in slot 1", NULL);
+	set_all_states(EMPTY);
+	set_state(0, INDICATING);
+
+	ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[0];
+
+	// Wait for USB inserted
+	printf("Waiting for master USB to be inserted\n");
+	while(channel_info_p->device_name[0] == '\0') {
+		usleep(100000);
+	}
+	
+	printf("found master : name=%s path=%s\n", channel_info_p->device_name, channel_info_p->device_path);
+	
+	set_state(0, COPYING);
+	lcd_display_message("Reading Master", NULL, channel_info_p->device_name, channel_info_p->device_path);
+	
+	int result = copy_master_to_ramdrive(channel_info_p->device_name, &shared_data_p->total_size);
+
+	// If this boot master happens to also be labelled "MASTER", the monitor thread will have
+	// raised master_reload_requested for it too - it's already been handled above, so clear
+	// the flag to stop the main loop redundantly reloading the exact same data again.
+	shared_data_p->master_reload_requested = false;
+
+	return result;
+}
+
+
+// Re-reads the master data from a newly-inserted "MASTER"-labelled USB drive in slot 0, at
+// any point after boot, without requiring the port-mapping dance in map_usb_port_numbers()
+// to be repeated. Called from the main loop whenever master_reload_requested is set.
+void reload_master(void) {
+
+	int master_device_id = shared_data_p->master_device_id;
+	char master_device_name[STRING_LEN];
+	snprintf(master_device_name, sizeof(master_device_name), "%s", shared_data_p->master_device_name);
+
+	printf("Reloading master from %s (device id=%d)\n", master_device_name, master_device_id);
+
+	lcd_display_message("Reading New Master", NULL, master_device_name, NULL);
+
+	if (copy_master_to_ramdrive(master_device_name, &shared_data_p->total_size) != 0) {
+		lcd_display_error_message("Failed to read", "new master");
+		shared_data_p->channel_info[master_device_id].state = FAILED;
+		shared_data_p->master_reload_requested = false;
+		return;
+	}
+
+	snprintf(buffer, sizeof(buffer), "Read %luMB", shared_data_p->total_size / 1024 / 1024);
+	lcd_display_message(buffer, NULL, "Optimising MP3 files", "Please Wait");
+
+	if (optimize_and_generate_crcs() != 0) {
+		lcd_display_error_message("Failed to process", "new master");
+		shared_data_p->channel_info[master_device_id].state = FAILED;
+		shared_data_p->master_reload_requested = false;
+		return;
+	}
+
+	printf("Master reload complete\n");
+	beep();
+	lcd_display_message("New Master Loaded", NULL, "Insert blank USBs", "then push button");
+
+	// Slot stays INDICATING (special/reserved) while the master remains plugged in;
+	// usb.c reverts it to EMPTY automatically once the drive is physically removed.
+	shared_data_p->master_reload_requested = false;
+}
+
+
+// Bump this if the identifier format written to PORT_MAP_FILE ever changes again -
+// it lets an old-format file be recognised as stale and trigger a fresh remap
+// instead of loading identifiers that will never match anything.
+#define PORT_MAP_FORMAT "by-path-v1"
+
+
+// Loads a previously-saved USB port map (physical socket -> stable device identifier)
+// from disk into channel_info[].device_path. The identifier is a /dev/disk/by-path
+// name, which is safe to trust as-is across reboots (see get_disk_by_path_id() in
+// usb.c for why). A missing file, or one written in an older/different format,
+// returns 0 so the caller falls back to remapping interactively.
+// Returns the number of slots successfully populated (0..MAX_USB_CHANNELS).
+static int load_port_map(void) {
+
+	FILE *f = fopen(PORT_MAP_FILE, "r");
+	if (!f) {
+		printf("No saved USB port map found at %s\n", PORT_MAP_FILE);
+		return 0;
+	}
+
+	char line[STRING_LEN];
+
+	if (!fgets(line, sizeof(line), f) || strncmp(line, PORT_MAP_FORMAT, strlen(PORT_MAP_FORMAT)) != 0) {
+		printf("Saved port map at %s is missing or in an old format - ignoring it\n", PORT_MAP_FILE);
+		fclose(f);
+		return 0;
+	}
+
+	while (fgets(line, sizeof(line), f)) {
+		int device_id;
+		char path[STRING_LEN];
+		if (sscanf(line, "%d=%255s", &device_id, path) == 2) {
+			if (device_id >= 0 && device_id < MAX_USB_CHANNELS) {
+				snprintf(shared_data_p->channel_info[device_id].device_path,
+					sizeof(shared_data_p->channel_info[device_id].device_path), "%s", path);
+			}
+			else {
+				fprintf(stderr, "WARNING: Ignoring invalid device_id %d in %s\n", device_id, PORT_MAP_FILE);
+			}
+		}
+	}
+
+	fclose(f);
+
+	int loaded = 0;
+	for (int device_id = 0; device_id < MAX_USB_CHANNELS; device_id++) {
+		if (shared_data_p->channel_info[device_id].device_path[0] != '\0') {
+			loaded++;
+		}
+	}
+
+	printf("Loaded %d/%d USB port mappings from %s\n", loaded, MAX_USB_CHANNELS, PORT_MAP_FILE);
+	return loaded;
+}
+
+
+// Saves the current channel_info[].device_path values to disk so map_usb_port_numbers()
+// doesn't need to be repeated on every boot. Written to a temp file in /tmp (always
+// writable) then copied into place with sudo, since /boot/firmware's exact mount
+// permissions can vary.
+static void save_port_map(void) {
+
+	char tmp_path[] = "/tmp/port_map.XXXXXX";
+	int fd = mkstemp(tmp_path);
+	if (fd < 0) {
+		fprintf(stderr, "ERROR: Could not create temp file for port map: %s\n", strerror(errno));
+		return;
+	}
+
+	FILE *f = fdopen(fd, "w");
+	if (!f) {
+		fprintf(stderr, "ERROR: Could not open temp file for port map: %s\n", strerror(errno));
+		close(fd);
+		remove(tmp_path);
+		return;
+	}
+
+	fprintf(f, "%s\n", PORT_MAP_FORMAT);
+
+	int saved = 0;
+	for (int device_id = 0; device_id < MAX_USB_CHANNELS; device_id++) {
+		const char* path = shared_data_p->channel_info[device_id].device_path;
+		if (path[0] != '\0') {
+			fprintf(f, "%d=%s\n", device_id, path);
+			saved++;
+		}
+	}
+
+	fclose(f);
+
+	char cmd[PATH_LEN*2];
+	snprintf(cmd, sizeof(cmd), "sudo cp %s %s", tmp_path, PORT_MAP_FILE);
+	if (execute_command(-1, cmd, false) != 0) {
+		fprintf(stderr, "ERROR: Could not copy port map into %s\n", PORT_MAP_FILE);
+	}
+	else {
+		printf("Saved USB port map (%d/%d slots) to %s\n", saved, MAX_USB_CHANNELS, PORT_MAP_FILE);
+	}
+
+	remove(tmp_path);
 }
 
 
@@ -621,7 +857,7 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 				if ((count == 0) || (shared_data_p->total_size==0))
 					percent = 0;
 				else
-					percent = 100*total_bytes_copied / shared_data_p->total_size / count;
+					percent = 100.0 * total_bytes_copied / shared_data_p->total_size / count;
 				
 				sprintf(buffer, "Busy=%-2u OK=%-2u Bad=%-2u", copying + verifying, pass, fail);		
 				lcd_write_string(buffer, lcd_line);				
@@ -680,6 +916,12 @@ void hub_main(int hub_number, ButtonStateEnum button_state)
 
 int main() {
 
+    // Force line-buffered stdout so log messages show up immediately even when this
+    // isn't attached to a terminal (e.g. running under systemd) - otherwise printf()
+    // output sits in a several-KB buffer and can appear to "stop" for long stretches
+    // even though the program is still working.
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
     // Create shared memory object
     int shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
     if (shm_fd == -1) {
@@ -718,6 +960,18 @@ int main() {
 		channel_info_p->state = EMPTY;
 	}
 	
+	// Try to reuse a previously-saved physical port map so the user doesn't have to
+	// redo map_usb_port_numbers() on every single boot. The topology path for a given
+	// socket only changes if the wiring itself changes, so a complete saved map is
+	// trusted as-is. An incomplete or missing file falls back to the interactive dance
+	// further down, which saves a fresh map once it's done. This must happen before
+	// usb_init() starts the monitor thread, so every device it ever sees is matched
+	// against the correct slot from the very first scan.
+	bool port_map_loaded = (load_port_map() == MAX_USB_CHANNELS);
+	if (port_map_loaded) {
+		shared_data_p->channels_active = MAX_USB_CHANNELS;
+	}
+	
 	// Initialise the LCD etc
 	gpio_init(shared_data_p);
 	lcd_init(shared_data_p);
@@ -730,25 +984,11 @@ int main() {
 
 	snprintf(buffer, sizeof(buffer), "Read %luMB", shared_data_p->total_size / 1024 / 1024);
 	lcd_display_message(buffer, NULL, "Optimising MP3 files", "Please Wait");
-	process_all_mp3_files(RAMDIR_PATH);
 
-	lcd_display_message("Calculating", "Checksums", NULL, NULL);
-	
-	// Save the CRCs for each file (including in subdirectories) to file crc.txt on the ramdrive
-	initialise_crc_table();
-	FILE *crc_file = fopen(CRC_FILE, "w");
-	if (!crc_file) {
-		fprintf(stderr, "Error: Cannot create CRC file %s\n", CRC_FILE);
-	   return 0;
+	if (optimize_and_generate_crcs() != 0) {
+		fprintf(stderr, "ERROR: Failed to optimise/checksum master data\n");
+		exit(1);
 	}
-
-	generate_crcs(RAMDIR_PATH, crc_file);
-	printf("Generate CRCs finished\n");
-		
-    if (fclose(crc_file) == -1) {
-        perror("close crc_file");
-        exit(1);
-    }
 
 	lcd_display_message(NULL, "Please", "Remove Master USB", NULL);
 	set_state(0, READY);
@@ -760,25 +1000,47 @@ int main() {
 		usleep(200000);
 	}
 	
-	shared_data_p->channel_info[0].device_path[0] = '\0';
-	shared_data_p->channels_active = 0;
-	lcd_clear();
-	beep();
-	usleep(1000000);
-	
-	// Ask the user to load a blank usb stick into each slot in turn
-	// so we can work out the channel number (and hence LEDs) to associate with each USB slot
-	get_button_state0();
-	get_button_state1();
-	map_usb_port_numbers();
-	get_button_state0();
-	get_button_state1();
+	if (port_map_loaded) {
+		printf("Using saved USB port map - skipping interactive port mapping\n");
+		lcd_display_message("Using saved", "USB port map", NULL, NULL);
+		beep();
+		usleep(1000000);
+	}
+	else {
+		lcd_clear();
+		beep();
+		usleep(1000000);
+
+		shared_data_p->channel_info[0].device_path[0] = '\0';
+		shared_data_p->channels_active = 0;
+
+		// Ask the user to load a blank usb stick into each slot in turn
+		// so we can work out the channel number (and hence LEDs) to associate with each USB slot
+		get_button_state0();
+		get_button_state1();
+		map_usb_port_numbers();
+		get_button_state0();
+		get_button_state1();
+
+		save_port_map();
+	}
 	
 	beep();	
 	lcd_display_message("READY", NULL, "Push button to start", NULL);
 	
+	// Discard anything raised during the setup dance above - the boot master was already
+	// handled by load_master(), and we don't want to react mid-mapping.
+	shared_data_p->master_reload_requested = false;
+	
 	bool starting = true;
 	while(true) {
+		
+		reap_finished_clients();
+		
+		if (shared_data_p->master_reload_requested) {
+			reload_master();
+			starting = true;
+		}
 		
 		ButtonStateEnum button_state0 = get_button_state0();
 		ButtonStateEnum button_state1 = get_button_state1();
@@ -813,4 +1075,3 @@ int main() {
 	
     return 0;
 }
-

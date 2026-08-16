@@ -27,7 +27,7 @@ void failed(char* errormessage) {
 		snprintf(temp_str, sizeof(temp_str), "ERROR: [%d] %s\n", device_id, errormessage);
 	}
 	
-    fprintf(stderr, temp_str);
+    fprintf(stderr, "%s", temp_str);
     
     if (client_info_p) {
         client_info_p->state = FAILED;
@@ -128,6 +128,9 @@ bool verify(char* partition_name, char *mount_point) {
 					
 		if (expected_crc != actual_crc) {
 			fprintf(stderr, "VERIFY ERROR: CRC Invalid. File='%s'\n", filename);
+			fclose(crc_file);
+			snprintf(buffer, sizeof(buffer), "umount %s", mount_point);
+			execute_command(device_id, buffer, true);
 			return false;
 		}				
     }
@@ -170,6 +173,9 @@ bool verify(char* partition_name, char *mount_point) {
 //---------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
+
+    // Force line-buffered stdout so log messages show up immediately - see server.c for details
+    setvbuf(stdout, NULL, _IOLBF, 0);
 
     if (argc != 2) {
         printf("Usage: %s <device_id>\n", argv[0]);
@@ -247,8 +253,9 @@ int main(int argc, char *argv[]) {
 	
 	// Append 1 to the device name to get the partition name, i.e. /dev/sdb1
 	char partition_name[STRING_LEN];
-	strncpy(partition_name, client_info_p->device_name, STRING_LEN);
-	strncat(partition_name, "1", STRING_LEN-1);
+	strncpy(partition_name, client_info_p->device_name, STRING_LEN-1);
+	partition_name[STRING_LEN-1] = '\0';
+	strncat(partition_name, "1", STRING_LEN - strlen(partition_name) - 1);
 
 	printf("[%d] Mount Point=%s Partition=%s\n", device_id, mount_point, partition_name);
 
@@ -265,10 +272,13 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Step 2: Get the size of the device
-    uint64_t device_size;
+    uint64_t device_size = 0;
     int fd = open(client_info_p->device_name, O_RDONLY);
     if (fd >= 0) {
-		ioctl(fd, BLKGETSIZE64, &device_size);
+		if (ioctl(fd, BLKGETSIZE64, &device_size) < 0) {
+			fprintf(stderr, "WARNING: [%d] Could not get device size for %s\n", device_id, client_info_p->device_name);
+		}
+		close(fd);
 	}
 	printf("Device Size=%lu\n", device_size);
     
@@ -353,8 +363,7 @@ int main(int argc, char *argv[]) {
 	
 	snprintf(buffer, sizeof(buffer), "sync %s", mount_point);
 	if (execute_command(device_id, buffer, false) != 0) {
-		fprintf(stderr, "VERIFY ERROR: Cannot sync device\n");
-		return false;
+		failed("Cannot sync device before unmount");
 	}
 
 	snprintf(buffer, sizeof(buffer), "umount %s", mount_point);
