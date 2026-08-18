@@ -29,10 +29,12 @@
 #include <errno.h>
 #include <dirent.h>
 #include <gpiod.h>
-#include <inttypes.h>
+#include <execinfo.h>
+#include <dirent.h>
+#include <pthread.h>
 
 
-#define VERSION_STRING "v1.6.2 " __DATE__
+#define VERSION_STRING "v1.5.0 " __DATE__
 #define VERIFY true
 #define CRC_SIZE 1*1024*1024   // CRCs will only be generated and checked for the first 1MB in each file
 
@@ -52,7 +54,7 @@
 // filesystem that stays writable under the standard overlay setup.
 #define PORT_MAP_FILE "/boot/firmware/usb_copier_port_map.conf"
 
-	
+s	
 #define MAX_FILES 1024      // Maximum number of files/directories per directory
 #define COPY_BUFFER_SIZE 65536  // Buffer size for file copying
 #define STRING_LEN 256        // general name string length
@@ -110,10 +112,8 @@ typedef struct {
 	int device_id;
 	int hub_number;
 	int port_number;
-	// Written by the server, polled by the client process. volatile stops the compiler
-	// caching it in a register inside the copy/verify loops.
-	volatile bool halt;
-	volatile ChannelStateEnum state;
+	bool halt;
+	ChannelStateEnum state;
 	time_t start_time;
 	char device_name[STRING_LEN];
 	char device_path[STRING_LEN];
@@ -131,9 +131,7 @@ typedef struct {
 	off_t total_size;    // total size of all files
 	ChannelInfoStruct channel_info[MAX_USB_CHANNELS];
 	uint32_t channels_active;
-	// Set by the usb monitor thread, consumed+cleared by the main loop - volatile for
-	// the same reason as halt above.
-	volatile bool master_reload_requested;
+	bool master_reload_requested;      // set by the usb monitor thread, consumed+cleared by the main loop
 	int master_device_id;              // slot index (0..MAX_USB_CHANNELS-1) the new master was found in
 	char master_device_name[STRING_LEN]; // e.g. "/dev/sdc" - device carrying the new master data
 } SharedDataStruct;
