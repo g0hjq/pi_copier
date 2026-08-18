@@ -41,10 +41,6 @@
 *.su
 *.idb
 *.pdb
-*.bak
-.ssh/
-.ssh
-
 
 # Kernel Module Compile Results
 *.mod*
@@ -59,4 +55,3 @@ dkms.conf
 client
 server
 
-.ssh/
