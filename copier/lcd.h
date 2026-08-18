@@ -24,7 +24,7 @@
 // Function prototypes
 void lcd_write_char(char c);
 void lcd_write_string(const char *str, int line );
-void lcd_set_backlight(int state);
+void lcd_write_string_no_lock(const char *str, int line);
 void lcd_clear(void);
 void lcd_home(void);
 void lcd_cleanup(void);
