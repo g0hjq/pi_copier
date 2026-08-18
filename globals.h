@@ -29,11 +29,10 @@
 #include <errno.h>
 #include <dirent.h>
 #include <gpiod.h>
-#include <execinfo.h>
-#include <dirent.h>
+#include <inttypes.h>
 
 
-#define VERSION_STRING "v1.0.1 " __DATE__
+#define VERSION_STRING "v1.6.1 " __DATE__
 #define VERIFY true
 #define CRC_SIZE 1*1024*1024   // CRCs will only be generated and checked for the first 1MB in each file
 
@@ -42,8 +41,16 @@
 #define MOUNT_POINT "/mnt/usb"
 //#define USB_CONFIG_FILE "./usb_ports.config"
 #define CRC_FILE "/var/ramdrive/crc.txt"
-#define FFMPEG_FILTERS "agate=mode=downward:ratio=1.2, silenceremove=start_periods=1:start_threshold=-40dB:start_silence=0.7, loudnorm=I=-18:TP=-2:LRA=7"
+#define FFMPEG_FILTERS "agate=mode=downward:ratio=1.2, silenceremove=start_periods=1:start_threshold=-35dB:start_silence=0.7, loudnorm=I=-18:TP=-2:LRA=7"
 #define NUMBER_OF_FFMPEG_THREADS 4
+#define MASTER_LABEL_KEYWORD "MASTER"   // a USB volume in slot 0 whose label contains this (case-insensitive) triggers a master reload
+
+// The USB port map must survive a reboot even when the root filesystem is running
+// under Raspberry Pi's overlay feature, where /var and the rest of the root filesystem
+// are backed by a RAM-based upper layer that's silently discarded on every reboot -
+// writes there succeed but never persist. /boot/firmware is a real, separately-mounted
+// filesystem that stays writable under the standard overlay setup.
+#define PORT_MAP_FILE "/boot/firmware/usb_copier_port_map.conf"
 
 	
 #define MAX_FILES 1024      // Maximum number of files/directories per directory
@@ -103,20 +110,15 @@ typedef struct {
 	int device_id;
 	int hub_number;
 	int port_number;
-	bool halt;
-	ChannelStateEnum state;
-	pid_t pid;
+	// Written by the server, polled by the client process. volatile stops the compiler
+	// caching it in a register inside the copy/verify loops.
+	volatile bool halt;
+	volatile ChannelStateEnum state;
 	time_t start_time;
 	char device_name[STRING_LEN];
 	char device_path[STRING_LEN];
 	off_t bytes_copied;
 } ChannelInfoStruct;
-
-
-typedef struct {
-	bool autostart;
-	bool reformat;
-} SettingsStruct;
 
 
 typedef struct {
@@ -126,9 +128,14 @@ typedef struct {
 
 
 typedef struct {
-	off_t total_size;
-	SettingsStruct settings;
+	off_t total_size;    // total size of all files
 	ChannelInfoStruct channel_info[MAX_USB_CHANNELS];
+	uint32_t channels_active;
+	// Set by the usb monitor thread, consumed+cleared by the main loop - volatile for
+	// the same reason as halt above.
+	volatile bool master_reload_requested;
+	int master_device_id;              // slot index (0..MAX_USB_CHANNELS-1) the new master was found in
+	char master_device_name[STRING_LEN]; // e.g. "/dev/sdc" - device carrying the new master data
 } SharedDataStruct;
 
 

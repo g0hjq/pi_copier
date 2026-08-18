@@ -19,15 +19,14 @@ void failed(char* errormessage) {
 	
     char temp_str[STRING_LEN*2];
     char error_buf[STRING_LEN];
+
+	// globals.h defines _GNU_SOURCE, so this is the GNU strerror_r: it returns a char*
+	// and may not touch error_buf at all. The old code compared the returned pointer
+	// against 0, which never matched, so every error lost its errno text.
+	const char *reason = strerror_r(errno, error_buf, sizeof(error_buf));
+	snprintf(temp_str, sizeof(temp_str), "ERROR: [%d] %s - %s\n", device_id, errormessage, reason);
 	
-	if (strerror_r(errno, error_buf, sizeof(error_buf)) == 0) {	
-		snprintf(temp_str, sizeof(temp_str), "ERROR: [%d] %s - %s\n", device_id, errormessage, error_buf);
-	}
-	else {
-		snprintf(temp_str, sizeof(temp_str), "ERROR: [%d] %s\n", device_id, errormessage);
-	}
-	
-    fprintf(stderr, temp_str);
+    fprintf(stderr, "%s", temp_str);
     
     if (client_info_p) {
         client_info_p->state = FAILED;
@@ -55,24 +54,30 @@ void failed(char* errormessage) {
 // -------------------------------------------------------------------------------------------
 
 
-// Splits one line of the CRC file (in format <filename>[TAB]<crc>) into filename and CRC
-void parse_crc_file(const char *crc_line, char *filename, uint32_t *crc) {
+// Splits one line of the CRC file (in format <filename>[TAB]<crc>) into filename and CRC.
+// Returns false on a malformed line. (It used to call exit(0) - i.e. exit *successfully* -
+// which left the channel stuck showing VERIFYING with no error anywhere.)
+static bool parse_crc_file(const char *crc_line, char *filename, size_t filename_size, uint32_t *crc) {
 
     // Find the tab separator
-    const char *tab = strstr(crc_line, "\t");
+    const char *tab = strchr(crc_line, '\t');
     if (!tab) {
-        fprintf(stderr, "ERROR: No tab separator found in CRC file\n");
-		exit(0);
+        fprintf(stderr, "VERIFY ERROR: No tab separator found in CRC file\n");
+		return false;
     }
 
     // Extract filename (before tab)
-    size_t filename_len = tab - crc_line;
-    strncpy(filename, crc_line, filename_len);
-    filename[filename_len] = '\0'; // Null-terminate
+    size_t filename_len = (size_t)(tab - crc_line);
+    if (filename_len >= filename_size) {
+        fprintf(stderr, "VERIFY ERROR: Filename too long in CRC file\n");
+        return false;
+    }
+    memcpy(filename, crc_line, filename_len);
+    filename[filename_len] = '\0';
 
     // Extract CRC (after tab)
-    const char *crc_str = tab + 1; // Skip the tab
-    *crc = (unsigned int)strtoul(crc_str, NULL, 16); // Convert hex to unsigned int}
+    *crc = (uint32_t)strtoul(tab + 1, NULL, 16);
+    return true;
 }
 
 
@@ -84,7 +89,9 @@ bool verify(char* partition_name, char *mount_point) {
 
 	uint32_t expected_crc, actual_crc;
 	char filename[PATH_LEN];
-	char tmpstr[PATH_LEN];
+	// Big enough for mount_point + '/' + filename + NUL, so the join below can't truncate.
+	// A truncated path here would silently verify the wrong file.
+	char tmpstr[STRING_LEN + PATH_LEN + 2];
 
 	gettimeofday(&start_time, NULL);
 
@@ -119,19 +126,38 @@ bool verify(char* partition_name, char *mount_point) {
 		if (!ptr) {
 			break;
 		}
-		parse_crc_file(buffer, filename, &expected_crc);
-		strcpy(tmpstr, mount_point);
-		strcat(tmpstr, "/");
-		strcat(tmpstr, filename);			
+
+		if (!parse_crc_file(buffer, filename, sizeof(filename), &expected_crc)) {
+			fclose(crc_file);
+			snprintf(buffer, sizeof(buffer), "umount %s", mount_point);
+			execute_command(device_id, buffer, true);
+			return false;
+		}
+
+		// Was strcpy + two strcat into a PATH_LEN buffer with no bound on either part
+		snprintf(tmpstr, sizeof(tmpstr), "%s/%s", mount_point, filename);
 	
 		actual_crc = compute_crc32(tmpstr);
 					
 		if (expected_crc != actual_crc) {
 			fprintf(stderr, "VERIFY ERROR: CRC Invalid. File='%s'\n", filename);
+			fclose(crc_file);
+			snprintf(buffer, sizeof(buffer), "umount %s", mount_point);
+			execute_command(device_id, buffer, true);
 			return false;
 		}				
     }
 	
+	// Done with the CRC file - closing here means the error paths below can't leak it
+	fclose(crc_file);
+
+	// Halted (either before we ever mounted, or part way through the comparisons)
+	if (client_info_p->halt) {
+		snprintf(buffer, sizeof(buffer), "umount %s", mount_point);
+		execute_command(device_id, buffer, true);
+		return false;
+	}
+
 	gettimeofday(&end_time, NULL);
 	int seconds = end_time.tv_sec - start_time.tv_sec;
  
@@ -153,9 +179,6 @@ bool verify(char* partition_name, char *mount_point) {
 
 	printf("[%d] Finished\n", device_id);
 
-	fclose(crc_file);
-
-
 	return true;
 }
 
@@ -171,6 +194,9 @@ bool verify(char* partition_name, char *mount_point) {
 
 int main(int argc, char *argv[]) {
 
+    // Force line-buffered stdout so log messages show up immediately - see server.c for details
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
     if (argc != 2) {
         printf("Usage: %s <device_id>\n", argv[0]);
         return 1;  // Exit with state code 1 if arguments are incorrect
@@ -180,8 +206,6 @@ int main(int argc, char *argv[]) {
     if (getuid() != 0) {
         failed("This program must be run as root (e.g., with sudo)");
     }
-	
-	srand(time(NULL));
 	
 	char *startptr = argv[1];
 	char *endptr;
@@ -247,8 +271,9 @@ int main(int argc, char *argv[]) {
 	
 	// Append 1 to the device name to get the partition name, i.e. /dev/sdb1
 	char partition_name[STRING_LEN];
-	strncpy(partition_name, client_info_p->device_name, STRING_LEN);
-	strncat(partition_name, "1", STRING_LEN-1);
+	strncpy(partition_name, client_info_p->device_name, STRING_LEN-1);
+	partition_name[STRING_LEN-1] = '\0';
+	strncat(partition_name, "1", STRING_LEN - strlen(partition_name) - 1);
 
 	printf("[%d] Mount Point=%s Partition=%s\n", device_id, mount_point, partition_name);
 
@@ -264,50 +289,36 @@ int main(int argc, char *argv[]) {
 		execute_command(device_id, buffer, true); // Ignore errors if not mounted
 	}
 
-	// Step 2: Get the size of the device
-    uint64_t device_size;
-    int fd = open(client_info_p->device_name, O_RDONLY);
+	// Step 2: Get the size of the partition we are going to write to.
+	// The partition, not the whole device - we reuse whatever partitioning the drive
+	// already has, so the partition is what actually has to be big enough.
+    uint64_t partition_size = 0;
+    int fd = open(partition_name, O_RDONLY);
     if (fd >= 0) {
-		ioctl(fd, BLKGETSIZE64, &device_size);
-	}
-	printf("Device Size=%lu\n", device_size);
-    
-	
-	// Step 3: Erase the device
-	if (!client_info_p->halt)
-	{
-		client_info_p->state = ERASING;
-		snprintf(buffer, sizeof(buffer), "wipefs -a %s", client_info_p->device_name);
-		if (execute_command(device_id, buffer, false) != 0) {
-			failed("Erasing device");
+		if (ioctl(fd, BLKGETSIZE64, &partition_size) < 0) {
+			fprintf(stderr, "WARNING: [%d] Could not get partition size for %s\n", device_id, partition_name);
 		}
+		close(fd);
 	}
+	else {
+		fprintf(stderr, "ERROR: [%d] Cannot open %s: %s\n", device_id, partition_name, strerror(errno));
+	}
+	printf("Partition Size=%" PRIu64 "\n", partition_size);
 
-	
-    // Step 4: Create a primary partition. 
-	if (!client_info_p->halt)
-	{
-		client_info_p->state = PARTITIONING;
-
-		if ((device_size - shared_data_p->total_size ) > (200*1024*1024))
-		{
-			// For larger disks with at least 200MB spare capacity ...
-			// Change the start-offset at random to move the FAT table and 
-			// only use 90% of the remaining space to improve the drive's wear leveling
-			int start_offset = (1 + (rand() % 16)) * 4;	
-			snprintf(buffer, sizeof(buffer), "parted -s %s mklabel msdos mkpart primary fat32 %uMiB 90%% >/dev/null", 
-				client_info_p->device_name, start_offset);		
-		}
-		else
-		{
-			// Small disks .... use all the space
-			snprintf(buffer, sizeof(buffer), "parted -s %s mklabel msdos mkpart primary fat32 1MiB 100%% >/dev/null", 
-				client_info_p->device_name);		
-		}
-		if (execute_command(device_id, buffer, false) != 0) {
-			failed("Creating primary partition");
-		}
+	if (partition_size == 0) {
+		failed("No usable partition 1 - the drive needs an existing partition table");
 	}
+	if (partition_size < (uint64_t)shared_data_p->total_size) {
+		fprintf(stderr, "ERROR: [%d] Partition is %" PRIu64 " bytes but the master data is %" PRIu64 " bytes\n",
+			device_id, partition_size, (uint64_t)shared_data_p->total_size);
+		failed("Partition too small for the master data");
+	}
+	
+	// Steps 3 and 4 (erase with wipefs, then repartition) have both been removed.
+	// The drive's existing partition table is left completely alone, and mkfs.vfat
+	// below simply writes a fresh FAT32 filesystem over whatever was in partition 1.
+	// The wear-levelling trick of randomising the partition start offset and capping
+	// the size at 90% went with them, along with the srand() that seeded it.
 
     // Step 5: Format the partition as FAT32
 	if (!client_info_p->halt)
@@ -353,8 +364,7 @@ int main(int argc, char *argv[]) {
 	
 	snprintf(buffer, sizeof(buffer), "sync %s", mount_point);
 	if (execute_command(device_id, buffer, false) != 0) {
-		fprintf(stderr, "VERIFY ERROR: Cannot sync device\n");
-		return false;
+		failed("Cannot sync device before unmount");
 	}
 
 	snprintf(buffer, sizeof(buffer), "umount %s", mount_point);

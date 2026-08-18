@@ -25,13 +25,13 @@ unsigned char bits[24*NUMBER_OF_HUBS];
 
 uint64_t milliseconds;
 
-void tone(int frequency, int milliseconds)
+void tone(int frequency, int duration_ms)
 {
 	
     // Calculate period in microseconds (1/frequency)
     unsigned int period_us = 1000000 / frequency;
     unsigned int half_period_us = period_us / 2;
-    unsigned int cycles = frequency * milliseconds / 1000;
+    unsigned int cycles = frequency * duration_ms / 1000;
 
     // Generate square wave
     for (unsigned int i = 0; i < cycles; i++) {
@@ -44,27 +44,27 @@ void tone(int frequency, int milliseconds)
 
 
 void beep() {
-	tone(1000, 200);
+	tone(880, 150);
 }
 
 
 void long_beep() {
-	tone(1000, 1000);
+	tone(880, 1000);
 }
 
 
 void double_beep() {
-	tone(1000, 80);
+	tone(880, 80);
 	usleep(80000);
-	tone(1000, 80);
+	tone(880, 80);
 }
 
 
 void error_beep() {
-	for (int i=0; i<25; i++)
+	for (int i=0; i<35; i++)
 	{
-		tone(300, 20);
-		tone(320, 20);
+		tone(300, 15);
+		tone(350, 15);
 	}
 }
 
@@ -160,9 +160,9 @@ static void send_led_data(unsigned char* bits, int bit_count)
 		delay_us(GPIO_DELAY);
 		gpiod_line_set_value(clock_line, 0);
 	}		
-	gpiod_line_set_value(latch_line1, 1);
+	gpiod_line_set_value(latch_line0, 1);
 	delay_us(GPIO_DELAY);
-	gpiod_line_set_value(latch_line1, 0);
+	gpiod_line_set_value(latch_line0, 0);
 	delay_us(GPIO_DELAY);
 	
 	// Send the LED data to the top set of shift registers
@@ -174,9 +174,9 @@ static void send_led_data(unsigned char* bits, int bit_count)
 		delay_us(GPIO_DELAY);
 		gpiod_line_set_value(clock_line, 0);
 	}		
-	gpiod_line_set_value(latch_line0, 1);
+	gpiod_line_set_value(latch_line1, 1);
 	delay_us(GPIO_DELAY);
-	gpiod_line_set_value(latch_line0, 0);
+	gpiod_line_set_value(latch_line1, 0);
 	delay_us(GPIO_DELAY);
 
 }
@@ -184,7 +184,7 @@ static void send_led_data(unsigned char* bits, int bit_count)
 void wait_for_button_release() {
 	do {
 		usleep(100000);
-	} while ((gpiod_line_get_value(button_line0)==0) || (gpiod_line_get_value(button_line0)==0));
+	} while ((gpiod_line_get_value(button_line0)==0) || (gpiod_line_get_value(button_line1)==0));
 
 	button_state0 = BUTTON_NOT_PRESSED;
 	button_state1 = BUTTON_NOT_PRESSED;
@@ -233,7 +233,7 @@ void get_ip_address(char* ip_addr, int addr_len) {
 	
 		
 // Both buttons held. Display System menu
-const char *system_commands[] = {"[Restart]", "[Shutdown]", "[AP Mode]", "[WiFi Mode]", "[Cancel]"};
+const char *system_commands[] = {"[Restart]", "[Shutdown]", "[AP Mode]", "[WiFi Mode]", "[Remap USB Ports]", "[Cancel]"};
 const int command_count = sizeof(system_commands) / sizeof(char*);
 
 void display_system_menu(void) {
@@ -288,7 +288,14 @@ void display_system_menu(void) {
 							lcd_display_message("WiFi Mode", ip_addr, "Username : pi", "Password: raspberry");
 							done = true;
 							break;
-						case 4: // Cancel
+						case 4: // Remap USB Ports
+							lcd_display_message(NULL, "Clearing port map", "Restarting to", "remap USB ports...");
+							execute_command(-1, "sudo rm -f " PORT_MAP_FILE, true);
+							beep();
+							sleep(2);
+							exit(0); // systemd restarts the service; with no saved map it redoes the interactive port mapping
+							break;
+						case 5: // Cancel
 							lcd_display_message(NULL, "Ready", NULL, NULL);
 							done = true;
 							break;
@@ -414,12 +421,12 @@ void* gpio_thread_function(void* arg) {
 	//   (Shift register bits 0, 8, 16, 24, 32 and 40 are unused)
 	//
 	//        CHAN 13 |  CHAN 12 |  CHAN 11 |  CHAN 10 |  CHAN 9  |  CHAN 8  |  CHAN 7
-	//		  R  G  Y |  R  G  Y |  R  G  Y |  R  G  Y |  R  G  Y |  R  G  Y | R  G  Y
+	//		  R  Y  G |  R  Y  G |  R  Y  G |  R  Y  G |  R  Y  G |  R  Y  G | R  Y  G
 	//       ---------+----------+----------+----------+----------+----------+----------
 	//		 25 26 27 | 28 29 30 | 31 33 34 | 35 36 37 | 38 39 41 | 42 43 44 | 45 46 47
 	//		
 	//         CHAN 6 |  CHAN 5  |  CHAN 4  |  CHAN 3  |  CHAN 2  |  CHAN 1  |  CHAN 0
-	//		  R  G  Y |  R  G  Y |  R  G  Y |  R  G  Y |  R  G  Y |  R  G  Y | R  G  Y
+	//		  R  Y  G |  R  Y  G |  R  Y  G |  R  Y  G |  R  Y  G |  R  Y  G | R  Y  G
 	//       ---------+----------+----------+----------+----------+----------+----------
 	//		  1  2  3 |  4  5  6 |  7  9 10 | 11 12 13 | 14 15 17 | 18 19 20 | 21 22 23		
 

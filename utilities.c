@@ -44,7 +44,6 @@ void print_client_info(const ChannelInfoStruct* client_info_p) {
 	printf("  PORT NUM      %u\n", client_info_p->port_number);
 	printf("  HALT          %s\n", client_info_p->halt ? "true" : "false");
 	printf("  STATE         %s\n", get_state_name(client_info_p->state));
-	printf("  PID           %d\n", client_info_p->pid);
 	printf("  START_TIME    %lu\n", client_info_p->start_time);
 	printf("  DEVICE_NAME   %s\n", client_info_p->device_name);
 	printf("  DEVICE_PATH   %s\n", client_info_p->device_path);
@@ -59,8 +58,6 @@ void print_client_info(const ChannelInfoStruct* client_info_p) {
 void print_shared_data(const SharedDataStruct* shared_data_p) {
 	printf("\n\n\nSHARED DATA\n==========================\n");
 	printf("ShareDataStruct size = %lu\n", sizeof(SharedDataStruct));
-	printf(" settings.autostart = %d\n", shared_data_p->settings.autostart); 
-	printf(" settings.reformat = %d\n\n", shared_data_p->settings.reformat); 
 	printf("DEVICE INFO :\n");
 
 	for (int i=0; i<MAX_USB_CHANNELS; i++)
@@ -75,6 +72,7 @@ void print_shared_data(const SharedDataStruct* shared_data_p) {
 //------------------------------
 // Shared Helper functions
 //------------------------------
+
 
 
 int get_device_id_from_hub_and_port_number(const SharedDataStruct* shared_data_p, int hub_number, int port_number) {
@@ -116,40 +114,6 @@ void trim(char *str) {
 
 
 /**
- * Extract just the usb route (3-1.3:1.0) part from the usb path, e.g.
- *  /sys/devices/platform/axi/1000120000.pcie/1f00300000.usb/xhci-hcd.1/
- *     usb3/3-1/3-1.3/3-1.3:1.0/host1/target1:0:0/1:0:0:0/block/sdb
- */
-void extract_usb_path(const char *input, char *output) {
-    // Initialize output as empty
-    output[0] = '\0';
-
-    // Find "/host"
-    const char *host = strstr(input, "/host");
-
-    // Move backward to find the start of the component (previous ':')
-    const char *end = host;
-    while (end > input && *end != ':') {
-        end--; // Move back until we hit a ':'
-    }
-
-
-    // Find the start of the component
-    const char *start = end;
-    while (start > input && *(start - 1) != '/') {
-        start--; // Move back until we hit a '/'
-    }
-
-    // Copy the component (e.g., "3-1.3:1.0")
-    size_t length = end - start;
-    strncpy(output, start, length);
-    output[length] = '\0';
-}
-
-
-
-
-/**
  * Function to execute shell commands and check for errors
  */
 int execute_command(const int device_id, const char *cmd, const bool ignore_errors) {
@@ -176,7 +140,14 @@ int execute_command(const int device_id, const char *cmd, const bool ignore_erro
         fprintf(stderr, "ERROR: Command '%s' failed with exit code %d\n", cmd, WEXITSTATUS(ret));
         return ret;
     }
-	
+
+    // A command killed by a signal (e.g. the OOM killer during four parallel ffmpegs)
+    // never sets WIFEXITED, so without this it was silently treated as success.
+    if (!ignore_errors && WIFSIGNALED(ret)) {
+        fprintf(stderr, "ERROR: Command '%s' killed by signal %d\n", cmd, WTERMSIG(ret));
+        return ret;
+    }
+
     return 0;
 }
 
@@ -184,6 +155,14 @@ int execute_command(const int device_id, const char *cmd, const bool ignore_erro
 //-----------------------------------------------------------------------------------------
 // Recursive copy of all files and sub directories from one directory or device to another
 //-----------------------------------------------------------------------------------------
+
+
+// Optional per-file progress hook - see set_copy_progress_callback() in utilities.h
+static void (*copy_progress_callback)(const char *filename) = NULL;
+
+void set_copy_progress_callback(void (*callback)(const char *filename)) {
+    copy_progress_callback = callback;
+}
 
 
 /**
@@ -202,28 +181,24 @@ int compare_names(const void *a, const void *b) {
  * @param bytes_copied_p Pointer to store the bytes copied (output)
  * @return 0 on success or halted, -1 on failure
  */
-int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *bytes_copied_p) {
-    char error_msg[STRING_LEN];
+int copy_file(const char *src_path, const char *dest_path, volatile bool *halt_p, off_t *bytes_copied_p) {
     struct stat stat_buf;
 
     // Get source file size
     if (stat(src_path, &stat_buf) < 0) {		
-        snprintf(error_msg, sizeof(error_msg), "Failed to stat source file '%s'", src_path);
-   		fprintf(stderr, "ERROR: %s\n", error_msg);
+   		fprintf(stderr, "ERROR: Failed to stat source file '%s'\n", src_path);
 		return -1;
     }
 	
     int src_fd = open(src_path, O_RDONLY);
     if (src_fd < 0) {
-        snprintf(error_msg, sizeof(error_msg), "Failed to open source file '%s'", src_path);
-   		fprintf(stderr, "ERROR: %s\n", error_msg);
+   		fprintf(stderr, "ERROR: Failed to open source file '%s'\n", src_path);
 		return -1;
     }
 
     int dest_fd = open(dest_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (dest_fd < 0) {
-        snprintf(error_msg, sizeof(error_msg), "Failed to open destination file '%s'", dest_path);
-   		fprintf(stderr, "ERROR: %s\n", error_msg);
+   		fprintf(stderr, "ERROR: Failed to open destination file '%s'\n", dest_path);
         close(src_fd);
 		return -1;
     }
@@ -236,8 +211,7 @@ int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *
 		if (*halt_p) return 0;
 		
         if (write(dest_fd, buffer, bytes_read) != bytes_read) {
-            snprintf(error_msg, sizeof(error_msg), "Failed to write to '%s'", dest_path);
-			fprintf(stderr, "ERROR: %s\n", error_msg);
+			fprintf(stderr, "ERROR: Failed to write to '%s'\n", dest_path);
             close(src_fd);
             close(dest_fd);
 			return -1;
@@ -247,16 +221,14 @@ int copy_file(const char *src_path, const char *dest_path, bool *halt_p, off_t *
     }
 
     if (bytes_read < 0) {
-        snprintf(error_msg, sizeof(error_msg), "Failed to read from '%s'", src_path);
-   		fprintf(stderr, "ERROR: %s\n", error_msg);
+   		fprintf(stderr, "ERROR: Failed to read from '%s'\n", src_path);
         close(src_fd);
         close(dest_fd);
 		return -1;
     }
 
     if (fsync(dest_fd) == -1) {
-        snprintf(error_msg, sizeof(error_msg), "Failed to fsync '%s'", dest_path);
-   		fprintf(stderr, "ERROR: %s\n", error_msg);
+   		fprintf(stderr, "ERROR: Failed to fsync '%s'\n", dest_path);
         close(src_fd);
         close(dest_fd);
 		return -1;
@@ -277,37 +249,123 @@ void sanitize_filename(char *filename) {
     }
 }
 
-
+// Truncates filename in place to at most max_len characters, keeping the extension.
+// Idempotent - which matters, because it is applied twice (master -> ramdrive, then
+// ramdrive -> USB) and the CRC file records the ramdrive names.
 void shorten_filename(char *filename, size_t max_len) {
-    if (!filename || max_len == 0) return;
 
     size_t len = strlen(filename);
-    if (len <= max_len) return; // No need to shorten
-
-    // Find the last '.' to identify the extension
-    char *ext = strrchr(filename, '.');
-    if (ext == NULL || ext == filename || *(ext + 1) == '\0') {
-        // No extension or dot at start/empty extension, truncate to max_len
-        if (len > max_len) {
-            filename[max_len] = '\0';
-        }
+    if (len <= max_len) {
         return;
     }
 
-    size_t ext_len = len - (ext - filename); // Includes the dot
+    const char *ext = strrchr(filename, '.');
+    size_t ext_len = ext ? strlen(ext) : 0;
 
-    if (ext_len >= max_len) {
-        // Extension alone is too long, truncate to max_len
+    // No usable extension (or one so long it would leave nothing of the stem) -
+    // just cut the name short. The old code blanked the name entirely here, which
+    // then produced a dest_path of "dir/" and failed the whole copy.
+    if (ext_len == 0 || ext_len >= max_len) {
         filename[max_len] = '\0';
         return;
     }
 
-    // Shorten base name to fit within max_len
-    size_t new_base_len = max_len - ext_len;
-    memmove(filename + new_base_len, ext, ext_len + 1); // Move extension
-    filename[new_base_len] = '\0'; // Null-terminate after base name
+    size_t keep_len = max_len - ext_len;
+    memmove(filename + keep_len, ext, ext_len + 1);  // overlapping, includes the NUL
 }
 
+
+
+/**
+ * Copies name into out (size out_size), truncating safely if it somehow doesn't fit.
+ * Used instead of snprintf("%s") so GCC can see a hard upper bound on the length -
+ * it treats names[i] as potentially unterminated within the whole 2D array otherwise,
+ * which trips -Wformat-truncation under -Werror.
+ */
+static void copy_name(char *out, size_t out_size, const char *name) {
+    size_t len = strnlen(name, out_size - 1);
+    memcpy(out, name, len);
+    out[len] = '\0';
+}
+
+
+/**
+ * Joins dir + "/" + name into out. Returns false (having logged the problem) if the
+ * result wouldn't fit, rather than letting snprintf silently truncate - a truncated
+ * path here would mean reading or writing the wrong file, which is far worse than
+ * failing the copy.
+ */
+static bool build_path(char *out, size_t out_size, const char *dir, const char *name) {
+
+    size_t dir_len  = strnlen(dir, out_size);
+    size_t name_len = strnlen(name, out_size);
+
+    if (dir_len + 1 + name_len + 1 > out_size) {
+        fprintf(stderr, "ERROR: Path too long: '%.*s/%.*s'\n",
+            (int)dir_len, dir, (int)name_len, name);
+        return false;
+    }
+
+    memcpy(out, dir, dir_len);
+    out[dir_len] = '/';
+    memcpy(out + dir_len + 1, name, name_len);
+    out[dir_len + 1 + name_len] = '\0';
+    return true;
+}
+
+
+/**
+ * Returns the total size in bytes of every regular file under path, recursively.
+ * Returns 0 if the directory can't be read at all.
+ *
+ * This was declared in utilities.h but never actually implemented. It mirrors
+ * copy_directory()'s rules - skips the Windows "System Volume Information" folder and
+ * counts regular files only - so the figure it returns matches what a copy of the same
+ * tree would actually write.
+ */
+uint64_t get_directory_size(const char *path) {
+
+    DIR *dir = opendir(path);
+    if (!dir) {
+        return 0;
+    }
+
+    uint64_t total = 0;
+    struct dirent *entry;
+    char subpath[PATH_LEN];
+    struct stat statbuf;
+
+    while ((entry = readdir(dir)) != NULL) {
+
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        if (!build_path(subpath, sizeof(subpath), path, entry->d_name)) {
+            continue;
+        }
+
+        // stat, not lstat - copy_directory() follows symlinks and copies the target,
+        // so this must do the same or the two totals won't agree.
+        if (stat(subpath, &statbuf) < 0) {
+            continue;
+        }
+
+        if (S_ISDIR(statbuf.st_mode)) {
+            // copy_directory() skips this one, so don't count it either
+            if (strstr(entry->d_name, "System Volume Information")) {
+                continue;
+            }
+            total += get_directory_size(subpath);
+        }
+        else if (S_ISREG(statbuf.st_mode)) {
+            total += (uint64_t)statbuf.st_size;
+        }
+    }
+
+    closedir(dir);
+    return total;
+}
 
 
 /**
@@ -319,9 +377,7 @@ void shorten_filename(char *filename, size_t max_len) {
  * @param crc_file handle for storing the name and CRC for the file being copied. Set to NULL if not required
  * @return 0 on success or halted, -1 on failure
  */
-int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_t *bytes_copied_p) {
-	
-    char error_msg[600];
+int copy_directory(const char *src_dir, const char *dest_dir, volatile bool* halt_p, off_t *bytes_copied_p) {
 
 	//printf("Copying files from %s to %s\n", src_dir, dest_dir);
 	
@@ -335,14 +391,12 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 
     DIR *dir = opendir(src_dir);
     if (!dir) {
-        snprintf(error_msg, sizeof(error_msg), "Failed to open source directory '%s'", src_dir);
-   		fprintf(stderr, "ERROR: %s\n", error_msg);
+   		fprintf(stderr, "ERROR: Failed to open source directory '%s'\n", src_dir);
 		return -1;
     }
 
     if (mkdir(dest_dir, 0755) < 0 && errno != EEXIST) {
-        snprintf(error_msg, sizeof(error_msg), "Failed to create destination directory '%s'", dest_dir);
-   		fprintf(stderr, "ERROR: %s\n", error_msg);
+   		fprintf(stderr, "ERROR: Failed to create destination directory '%s'\n", dest_dir);
         closedir(dir);
 		return -1;
     }
@@ -365,21 +419,19 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
         }
 
         if (count >= MAX_FILES) {
-            snprintf(error_msg, sizeof(error_msg), "Too many files in directory '%s' (max: %d)", src_dir, MAX_FILES);
-			fprintf(stderr, "ERROR: %s\n", error_msg);
+			fprintf(stderr, "ERROR: Too many files in directory '%s' (max: %d)\n", src_dir, MAX_FILES);
             closedir(dir);
 			return -1;
         }
 
         if (strlen(entry->d_name) >= PATH_LEN) {
-            snprintf(error_msg, sizeof(error_msg), "File name too long: '%s' (max: %d characters)", entry->d_name, PATH_LEN - 1);
-			fprintf(stderr, "ERROR: %s\n", error_msg);
+			fprintf(stderr, "ERROR: File name too long: '%s' (max: %d characters)\n",
+				entry->d_name, PATH_LEN - 1);
             closedir(dir);
 			return -1;
         }
 
-        strncpy(names[count], entry->d_name, PATH_LEN);
-        names[count][PATH_LEN - 1] = '\0';
+        copy_name(names[count], PATH_LEN, entry->d_name);
         count++;
     }
     closedir(dir);
@@ -393,55 +445,52 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 	
 
     // Second pass: process sorted entries
-    char src_path[PATH_LEN], dest_path[PATH_LEN];
+    char src_path[PATH_LEN], dest_path[PATH_LEN], dest_name[PATH_LEN];
     struct stat stat_buf;
 
 
 
-    // Copy files first
-	char dest_name[PATH_LEN];
 	
     for (int i = 0; i < count; i++) {
-		
-		if (strlen(src_dir) + strlen(names[i]) + 2 >= PATH_LEN) {
-			fprintf(stderr, "ERROR: src_dir and names[i] is too long\n");			
-		}
-			
-		snprintf(src_path, PATH_LEN, "%s/%s", src_dir, names[i]);
 
-		if (strlen(dest_path) + strlen(names[i]) + 2 >= PATH_LEN) {
-			fprintf(stderr, "ERROR: dest_path and names[i] is too long\n");			
+		// NOTE: the old length pre-checks here read dest_path before it had ever been
+		// written (undefined behaviour on the first iteration) and only printed anyway.
+		// build_path() does the check properly and actually fails on overflow.
+
+		if (!build_path(src_path, sizeof(src_path), src_dir, names[i])) {
+			return -1;
 		}
 
 		// Remove any invalid characters such as "?" and "*" as these cause errors 
 		// if written to a FAT32 flash drive
-		strcpy(dest_name, names[i]);
+		copy_name(dest_name, sizeof(dest_name), names[i]);
 		sanitize_filename(dest_name);
 
-		// If it's an mp3 file, truncate the name to 64 characters to avoid string overflows
+		// Truncate the name to 64 characters to avoid string overflows
 		shorten_filename(dest_name, 64);
-		
-		snprintf(dest_path, PATH_LEN, "%s/%s", dest_dir, dest_name);
- 
-	
+
+		if (!build_path(dest_path, sizeof(dest_path), dest_dir, dest_name)) {
+			return -1;
+		}
+
         if (stat(src_path, &stat_buf) < 0) {
-            snprintf(error_msg, sizeof(error_msg), "Failed to stat '%s'", src_path);
-			fprintf(stderr, "ERROR: %s\n", error_msg);
+			fprintf(stderr, "ERROR: Failed to stat '%s'\n", src_path);
 			return -1;
         }
 
 		if (*halt_p) return 0;
 
         if (S_ISREG(stat_buf.st_mode)) {
+
+			if (copy_progress_callback) {
+				copy_progress_callback(dest_name);
+			}
+
             if (copy_file(src_path, dest_path, halt_p, bytes_copied_p) < 0) {
-                snprintf(error_msg, sizeof(error_msg), "Failed to copy file: '%s' -> '%s'", src_path, dest_path);
-				fprintf(stderr, "ERROR: %s\n", error_msg);
+				fprintf(stderr, "ERROR: Failed to copy file: '%s' -> '%s'\n", src_path, dest_path);
 				return -1;
             }
-			
-			
         }
-		
 	}
 	
 
@@ -449,17 +498,24 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 
     // Then copy directories
     for (int i = 0; i < count; i++) {
-		
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-truncation"        
-        snprintf(src_path, PATH_LEN, "%s/%s", src_dir, names[i]);
-        snprintf(dest_path, PATH_LEN, "%s/%s", dest_dir, names[i]);
-#pragma GCC diagnostic pop
 
+        // Directory names need the same treatment as file names - an unsanitised "?"
+        // or "*" makes mkdir() fail on FAT32 and aborts the entire copy. Applying the
+        // identical (idempotent) transform on both hops keeps the ramdrive and the USB
+        // in step, which is what lets verify() find the files by their CRC-file names.
+        copy_name(dest_name, sizeof(dest_name), names[i]);
+        sanitize_filename(dest_name);
+        shorten_filename(dest_name, 64);
+
+        if (!build_path(src_path, sizeof(src_path), src_dir, names[i])) {
+            return -1;
+        }
+        if (!build_path(dest_path, sizeof(dest_path), dest_dir, dest_name)) {
+            return -1;
+        }
 
         if (stat(src_path, &stat_buf) < 0) {
-            snprintf(error_msg, sizeof(error_msg), "Failed to stat '%s'", src_path);
-			fprintf(stderr, "ERROR: %s\n", error_msg);
+			fprintf(stderr, "ERROR: Failed to stat '%s'\n", src_path);
 			return -1;
         }
 
@@ -467,8 +523,7 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 	
         if (S_ISDIR(stat_buf.st_mode)) {
             if (copy_directory(src_path, dest_path, halt_p, bytes_copied_p) < 0) {
-                snprintf(error_msg, sizeof(error_msg), "Failed to copy subdirectory '%s'", src_path);
-				fprintf(stderr, "ERROR: %s\n", error_msg);
+				fprintf(stderr, "ERROR: Failed to copy subdirectory '%s'\n", src_path);
 				return -1;
             }
         }
@@ -482,9 +537,7 @@ int copy_directory(const char *src_dir, const char *dest_dir, bool* halt_p, off_
 
 // Initialize CRC-32 table
 void initialise_crc_table() {
-	
-	#define CRC32_POLY 0x04C11DB7	
-	
+
     for (int i = 0; i < 256; i++) {
         uint32_t crc = i << 24;
         for (int j = 0; j < 8; j++) {
@@ -519,5 +572,40 @@ uint32_t compute_crc32(char *filename) {
     fclose(file);
 	
     return crc;
+}
+
+
+
+// Reads the filesystem LABEL of a partition device (e.g. "/dev/sdc1") using blkid.
+// Returns true and fills label_out with a null-terminated label if one was found,
+// false (with label_out left as an empty string) otherwise.
+bool get_volume_label(const char *partition_name, char *label_out, size_t label_out_size) {
+
+	label_out[0] = '\0';
+
+	char cmd[PATH_LEN];
+	snprintf(cmd, sizeof(cmd), "sudo blkid -s LABEL -o value %s 2>/dev/null", partition_name);
+
+	FILE *fp = popen(cmd, "r");
+	if (!fp) {
+		fprintf(stderr, "ERROR: get_volume_label: popen failed for %s\n", partition_name);
+		return false;
+	}
+
+	bool got_line = (fgets(label_out, label_out_size, fp) != NULL);
+	pclose(fp);
+
+	if (!got_line) {
+		label_out[0] = '\0';
+		return false;
+	}
+
+	// Strip the trailing newline fgets leaves in place
+	size_t len = strlen(label_out);
+	if (len > 0 && label_out[len-1] == '\n') {
+		label_out[len-1] = '\0';
+	}
+
+	return (label_out[0] != '\0');
 }
 

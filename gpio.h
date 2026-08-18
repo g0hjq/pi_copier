@@ -16,7 +16,7 @@ void* gpio_thread_function(void* arg);
 ButtonStateEnum get_button_state0(void);
 ButtonStateEnum get_button_state1(void);
 
-void tone(int frequency, int milliseconds);
+void tone(int frequency, int duration_ms);
 void beep();
 void long_beep();
 void double_beep();
