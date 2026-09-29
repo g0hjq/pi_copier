@@ -11,7 +11,26 @@ int shm_fd = -1;
 char buffer[STRING_LEN*2];
 extern uint32_t crc32_table[256];
 
+// Where this client mounts its stick, recorded once main() has worked it out, so that
+// failed() can detach it on the way out. Empty until then.
+static char client_mount_point[STRING_LEN] = "";
 
+
+
+
+// Best-effort lazy unmount for the failure path. "umount -l" detaches the filesystem
+// even if the stick has dropped off the bus or a file on it is still open, so a dead
+// stick can't leave a stale mount behind. Errors are ignored - it may not be mounted.
+static void unmount_lazily(int id, const char *mount_point) {
+
+	if (mount_point[0] == '\0') {
+		return;
+	}
+
+	char cmd[STRING_LEN + 32];
+	snprintf(cmd, sizeof(cmd), "umount -l %s 2>/dev/null", mount_point);
+	execute_command(id, cmd, true);
+}
 
 
 // Reports the error message back to the server and shuts down the client program
@@ -32,6 +51,9 @@ void failed(char* errormessage) {
         client_info_p->state = FAILED;
 		client_info_p->halt = true;
     }
+
+	// Done after the message above, because running umount can change errno
+	unmount_lazily(device_id, client_mount_point);
     
     if (shared_data_p && (shared_data_p != MAP_FAILED)) {
         munmap(shared_data_p, sizeof(SharedDataStruct));
@@ -268,6 +290,7 @@ int main(int argc, char *argv[]) {
 	}
 		
     snprintf(mount_point, sizeof(mount_point), "%s/%s1", MOUNT_POINT, last_slash+1);	
+	snprintf(client_mount_point, sizeof(client_mount_point), "%s", mount_point);
 	
 	// Append 1 to the device name to get the partition name, i.e. /dev/sdb1
 	char partition_name[STRING_LEN];
@@ -402,4 +425,3 @@ int main(int argc, char *argv[]) {
  	
     return 0;
 }
-

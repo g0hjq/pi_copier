@@ -32,7 +32,7 @@
 #include <inttypes.h>
 
 
-#define VERSION_STRING "v1.6.2 " __DATE__
+#define VERSION_STRING "v1.6.3 " __DATE__
 #define VERIFY true
 #define CRC_SIZE 1*1024*1024   // CRCs will only be generated and checked for the first 1MB in each file
 

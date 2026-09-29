@@ -240,6 +240,11 @@ void display_system_menu(void) {
 	
 	int command_num = 0;
 	char ip_addr[STRING_LEN];
+
+	// Both buttons are still held down from opening the menu. Reading them straight away
+	// meant that letting go of the top button before the bottom one executed [Restart].
+	lcd_display_message("System Menu", NULL, "Release buttons", NULL);
+	wait_for_button_release();
 	
 	while (true) {		
 	
@@ -338,15 +343,23 @@ void* gpio_thread_function(void* arg) {
 		clock_gettime(CLOCK_REALTIME, &ts);
 		milliseconds = (ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
 
-		// -------------------------
-		// Button 0 
-		// -------------------------
+		// Read both buttons up front, so each one's long-press logic below can see whether
+		// the other button is being held at the same time.
         int value0 = gpiod_line_get_value(button_line0);
         if (value0 < 0) {
             fprintf(stderr, "ERROR: Failed to read button0 value\n");
             exit(1);
         }
 
+        int value1 = gpiod_line_get_value(button_line1);
+        if (value1 < 0) {
+            fprintf(stderr, "ERROR: Failed to read button2 value\n");
+            exit(1);
+        }
+
+		// -------------------------
+		// Button 0 
+		// -------------------------
         long press_duration0 = milliseconds - press_start_time0;
 
         if (value0 == 0 && prev_value0 == 1) { // Button pressed (falling edge)
@@ -355,7 +368,12 @@ void* gpio_thread_function(void* arg) {
             is_pressed0 = true;
 		}
 		else if (press_duration0 >= LONG_PRESS_TIME && value0 == 0 && !wait_for_release0) { // button held down
-            button_state0 = BUTTON_LONG_PRESS;
+			// If the other button is held too, this is the system menu combination rather
+			// than a long press of this one, so don't publish it. Otherwise the main loop
+			// could consume it (cancelling that hub's run) before the menu check below saw it.
+			if (value1 != 0) {
+	            button_state0 = BUTTON_LONG_PRESS;
+			}
 			wait_for_release0 = true;
 		}
 		else if (value0 == 1 && prev_value0 == 0 && is_pressed0) { // Button released (rising edge)
@@ -371,12 +389,6 @@ void* gpio_thread_function(void* arg) {
 		// -------------------------
 		// Button 1
 		// -------------------------
-        int value1 = gpiod_line_get_value(button_line1);
-        if (value1 < 0) {
-            fprintf(stderr, "ERROR: Failed to read button2 value\n");
-            exit(1);
-        }
-
         long press_duration1 = milliseconds - press_start_time1;
 
         if (value1 == 0 && prev_value1 == 1) { // Button pressed (falling edge)
@@ -385,7 +397,10 @@ void* gpio_thread_function(void* arg) {
             is_pressed1 = true;			
         }
 		else if (press_duration1 >= LONG_PRESS_TIME && value1 == 0 && !wait_for_release1) { // button held down
-            button_state1 = BUTTON_LONG_PRESS;
+			// Same as button 0 - not a long press if it's part of the menu combination
+			if (value0 != 0) {
+	            button_state1 = BUTTON_LONG_PRESS;
+			}
 			wait_for_release1 = true;
 		}
         else if (value1 == 1 && prev_value1 == 0 && is_pressed1) { // Button released (rising edge)
@@ -398,9 +413,15 @@ void* gpio_thread_function(void* arg) {
         prev_value1 = value1;		
 		
 				
-		// Shutdown (or restart if systemd is configured for that) when both buttons are held down
-		if (((button_state0 == BUTTON_LONG_PRESS) && (button_state1 != BUTTON_NOT_PRESSED)) ||
-		    ((button_state1 == BUTTON_LONG_PRESS) && (button_state0 != BUTTON_NOT_PRESSED))) {
+		// System menu: both buttons held for at least the long-press time. Worked out here
+		// from the pin levels and press start times rather than from button_state0/1,
+		// because the main loop consumes those every 100ms - it could take the first
+		// button's long press before the second one's had been set, so the menu never opened.
+		bool both_held = (value0 == 0) && (value1 == 0) && is_pressed0 && is_pressed1 &&
+			((long)(milliseconds - press_start_time0) >= LONG_PRESS_TIME) &&
+			((long)(milliseconds - press_start_time1) >= LONG_PRESS_TIME);
+
+		if (both_held) {
 				
 			// Both buttons held. Display System menu
 			for (int device_id=0; device_id < MAX_USB_CHANNELS; device_id++) {
@@ -411,6 +432,15 @@ void* gpio_thread_function(void* arg) {
 			long_beep();
 			display_system_menu();
 			wait_for_button_release();
+
+			// The buttons were pressed and released while the menu had control, so the edge
+			// tracking above is out of date. Start again from both released.
+			prev_value0 = 1;
+			prev_value1 = 1;
+			is_pressed0 = false;
+			is_pressed1 = false;
+			wait_for_release0 = false;
+			wait_for_release1 = false;
 		}
 
 		

@@ -49,40 +49,30 @@ void set_all_states(ChannelStateEnum state) {
 // -ar 44.1k -ab 128k -ac 1 output06.mp3
 int ffmpeg_complete_count = 0;
 int ffmpeg_file_count = 0;
+int ffmpeg_failed_count = 0;   // files left unoptimised because ffmpeg (or replacing the file) failed
 static pthread_mutex_t ffmpeg_count_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-void* ffmpeg_thread_function(void* arg)
-{
-	// These are built from RAMDIR_PATH + a d_name of up to 255 chars, so they need to be
-	// the same size as the buffer the caller built the path in.
-	char mp3_file[STRING_LEN*2];
-	char temp_file[STRING_LEN*2];
-	char buffer2[STRING_LEN*4];
-	
-	int ret = 0;
-	
-	snprintf(mp3_file, sizeof(mp3_file), "%s", (const char*)arg);
-	
-	const char* last_dot = strrchr(mp3_file, '.');
-	size_t base_len = last_dot ? (size_t)(last_dot - mp3_file) : strlen(mp3_file);
-	
-	snprintf(temp_file, sizeof(temp_file), "%.*s.tmp", (int)base_len, mp3_file);
 
+// Runs ffmpeg on one file, writing to a .tmp alongside it. Returns true if the .tmp holds
+// a usable optimised version, false if the original should be kept as it is.
+static bool run_ffmpeg(const char* mp3_file, const char* temp_file) {
+
+	char command[STRING_LEN*4];
 
 	// Use a semaphore to only allow 4 instances of ffmpeg to run at one time (one per cpu core)
 	if (sem_wait(&ffmpeg_sem) == -1)
 	{
 		fprintf(stderr, "ERROR: sem_wait failed\n");
-		return(NULL);
+		return false;
 	}
 	
 	printf("*******run_ffmpeg(%s) ....STARTING\n", mp3_file);
 
 	// run ffmpeg. output in 128K mono
-	snprintf(buffer2, sizeof(buffer2), 
+	snprintf(command, sizeof(command), 
 		"ffmpeg -i \"%s\" -y -loglevel error -af \"%s\" -f mp3 -ar 44.1K -ab 128k -ac 1 \"%s\"", 
 		mp3_file, FFMPEG_FILTERS, temp_file);
-	ret = execute_command(-1, buffer2, false);
+	int ret = execute_command(-1, command, false);
 	
 	// Don't return early on a sem_post failure - that would permanently lose one of the
 	// four slots for the rest of the run.
@@ -92,35 +82,65 @@ void* ffmpeg_thread_function(void* arg)
 		
 	printf("*******run_ffmpeg(%s) ....FINISHED\n", mp3_file);
 
-	// Up to MAX_FILES threads share this counter
+	if (ret != 0) {
+		fprintf(stderr, "WARNING: ffmpeg failed on %s - using the original\n", mp3_file);
+		return false;
+	}
+
+	// An exit code of 0 with an empty output (e.g. a file that is all silence, which
+	// silenceremove trims to nothing) would replace the recording with nothing at all.
+	struct stat st;
+	if ((stat(temp_file, &st) != 0) || (st.st_size == 0)) {
+		fprintf(stderr, "WARNING: ffmpeg produced no output for %s - using the original\n", mp3_file);
+		return false;
+	}
+
+	return true;
+}
+
+
+void* ffmpeg_thread_function(void* arg)
+{
+	// These are built from RAMDIR_PATH + a d_name of up to 255 chars, so they need to be
+	// the same size as the buffer the caller built the path in.
+	char mp3_file[STRING_LEN*2];
+	char temp_file[STRING_LEN*2];
+	
+	snprintf(mp3_file, sizeof(mp3_file), "%s", (const char*)arg);
+	
+	const char* last_dot = strrchr(mp3_file, '.');
+	size_t base_len = last_dot ? (size_t)(last_dot - mp3_file) : strlen(mp3_file);
+	
+	snprintf(temp_file, sizeof(temp_file), "%.*s.tmp", (int)base_len, mp3_file);
+
+	bool optimised = run_ffmpeg(mp3_file, temp_file);
+
+	// rename() swaps the optimised version in over the original in a single step, so if
+	// it fails the original is still there. The old code did "rm original" then
+	// "mv tmp original" as two shell commands - if the mv failed, the file was lost.
+	if (optimised && (rename(temp_file, mp3_file) != 0)) {
+		int err = errno;
+		fprintf(stderr, "WARNING: Could not replace %s with its optimised version (%s) - using the original\n",
+			mp3_file, strerror(err));
+		optimised = false;
+	}
+
+	if (!optimised) {
+		// Remove any half-written .tmp. It isn't an .mp3 so it never gets a CRC, but
+		// copy_directory() would happily write it out to every stick.
+		unlink(temp_file);
+	}
+
+	// Up to MAX_FILES threads share these counters
 	pthread_mutex_lock(&ffmpeg_count_mutex);
 	ffmpeg_complete_count++;
+	if (!optimised) {
+		ffmpeg_failed_count++;
+	}
 	int percent_complete = (ffmpeg_complete_count*100) / ffmpeg_file_count;
 	pthread_mutex_unlock(&ffmpeg_count_mutex);
 
 	lcd_display_bargraph(percent_complete, 3);
-	
-	if (ret != 0) {
-		fprintf(stderr, "ERROR running ffmpeg on %s - keeping the original\n", mp3_file);
-		// Remove the half-written .tmp. It isn't an .mp3 so it never gets a CRC, but
-		// copy_directory() would happily write it out to every stick.
-		snprintf(buffer2, sizeof(buffer2), "rm -f \"%s\"", temp_file);
-		execute_command(-1, buffer2, true);
-		return(NULL);
-	}
-
-	snprintf(buffer2, sizeof(buffer2), "rm \"%s\"", mp3_file);
-	if (execute_command(-1, buffer2, false) != 0) {
-		fprintf(stderr, "ERROR deleting %s\n", mp3_file);
-		return(NULL);
-	}
-		
-
-	snprintf(buffer2, sizeof(buffer2), "mv \"%s\" \"%s\"", temp_file, mp3_file);		
-	if (execute_command(-1, buffer2, false) != 0) {
-		fprintf(stderr, "ERROR renaming %s to %s\n", temp_file, mp3_file);
-	}
-	
 	
 	return NULL;
 }
@@ -135,14 +155,19 @@ int is_mp3(const char *filename) {
 }
 
 
-// Multi-threaded Function to process all MP3 files in a directory, 4 at a time 
+// Multi-threaded Function to process all MP3 files in a directory, 4 at a time.
+// Returns the number of files that couldn't be optimised (those are left as they were),
+// or -1 if the directory couldn't be read at all.
 int process_all_mp3_files(const char *dir_path) {
 	
-	int ret = 0;
 	pthread_t threads[MAX_FILES];
 	char* filenames[MAX_FILES];
 	
+	// All three reset here. ffmpeg_complete_count used not to be, so on a master reload
+	// the progress bar started from the previous run's count.
 	ffmpeg_file_count = 0;
+	ffmpeg_complete_count = 0;
+	ffmpeg_failed_count = 0;
 	
     // Initialize the unnamed semaphore with value 4
     if (sem_init(&ffmpeg_sem, 0, NUMBER_OF_FFMPEG_THREADS) == -1) {
@@ -211,7 +236,7 @@ int process_all_mp3_files(const char *dir_path) {
 
     closedir(dir);
 
-	return ret;
+	return ffmpeg_failed_count;
 }
 
 
@@ -468,6 +493,11 @@ static int copy_master_to_ramdrive(const char* device_name, off_t* total_size_ou
 	}
 
 
+	// Detach anything still mounted here from an earlier failed attempt, otherwise every
+	// retry would fail at the mount below. Errors are ignored - normally nothing is mounted.
+	snprintf(buffer, sizeof(buffer), "sudo umount -l %s 2>/dev/null", mount_point);
+	execute_command(-1, buffer, true);
+
     // Mount the USB drive
 	snprintf(buffer, sizeof(buffer), "sudo mount %s %s", partition_name, mount_point);
 	if (execute_command(-1, buffer, false) != 0) {
@@ -525,7 +555,22 @@ static int copy_master_to_ramdrive(const char* device_name, off_t* total_size_ou
 // Caller is responsible for showing an appropriate "please wait" message before calling this.
 static int optimize_and_generate_crcs(void) {
 
-	process_all_mp3_files(RAMDIR_PATH);
+	int not_optimised = process_all_mp3_files(RAMDIR_PATH);
+	if (not_optimised < 0) {
+		fprintf(stderr, "ERROR: Could not read %s to optimise it\n", RAMDIR_PATH);
+		return 1;
+	}
+
+	// Files ffmpeg couldn't handle have been left as they were, so the master is still
+	// complete - just not all of it optimised. Warn, then carry on.
+	if (not_optimised > 0) {
+		fprintf(stderr, "WARNING: %d of %d file(s) could not be optimised - using the originals\n",
+			not_optimised, ffmpeg_file_count);
+		snprintf(buffer, sizeof(buffer), "%d of %d files", not_optimised, ffmpeg_file_count);
+		lcd_display_message("** WARNING **", buffer, "not optimised -", "using originals");
+		double_beep();
+		sleep(4);
+	}
 
 	lcd_display_message("Calculating", "Checksums", NULL, NULL);
 
@@ -565,75 +610,125 @@ static int optimize_and_generate_crcs(void) {
 }
 
 
-// Prompts the user to insert the master USB in slot one. 
-// Recursively copies all files to the ramdrive
-int load_master() {
-	
-	lcd_display_message(NULL, "Insert Master", "in slot 1", NULL);
-	set_all_states(EMPTY);
-	set_state(0, INDICATING);
+// One attempt at reading the master from device_name onto the ramdrive, then optimising
+// and checksumming it. heading is the top line shown on the LCD while reading.
+// Returns 0 on success, non-zero on failure.
+static int read_master_once(const char* device_name, const char* heading) {
 
-	ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[0];
-
-	// Wait for USB inserted
-	printf("Waiting for master USB to be inserted\n");
-	while(channel_info_p->device_name[0] == '\0') {
-		usleep(100000);
-	}
-	
-	printf("found master : name=%s path=%s\n", channel_info_p->device_name, channel_info_p->device_path);
-	
-	set_state(0, COPYING);
 	// Line 3 is left clear - copy_master_to_ramdrive() shows the current file there
-	lcd_display_message("Reading Master", NULL, channel_info_p->device_name, NULL);
-	
-	int result = copy_master_to_ramdrive(channel_info_p->device_name, &shared_data_p->total_size);
+	lcd_display_message(heading, NULL, device_name, NULL);
 
-	// If this boot master happens to also be labelled "MASTER", the monitor thread will have
-	// raised master_reload_requested for it too - it's already been handled above, so clear
-	// the flag to stop the main loop redundantly reloading the exact same data again.
-	shared_data_p->master_reload_requested = false;
-
-	return result;
-}
-
-
-// Re-reads the master data from a newly-inserted "MASTER"-labelled USB drive in slot 0, at
-// any point after boot, without requiring the port-mapping dance in map_usb_port_numbers()
-// to be repeated. Called from the main loop whenever master_reload_requested is set.
-void reload_master(void) {
-
-	int master_device_id = shared_data_p->master_device_id;
-	char master_device_name[STRING_LEN];
-	snprintf(master_device_name, sizeof(master_device_name), "%s", shared_data_p->master_device_name);
-
-	printf("Reloading master from %s (device id=%d)\n", master_device_name, master_device_id);
-
-	lcd_display_message("Reading New Master", NULL, master_device_name, NULL);
-
-	if (copy_master_to_ramdrive(master_device_name, &shared_data_p->total_size) != 0) {
-		lcd_display_error_message("Failed to read", "new master");
-		shared_data_p->channel_info[master_device_id].state = FAILED;
-		shared_data_p->master_reload_requested = false;
-		return;
+	if (copy_master_to_ramdrive(device_name, &shared_data_p->total_size) != 0) {
+		fprintf(stderr, "ERROR: Failed to copy the master from %s\n", device_name);
+		return 1;
 	}
 
 	snprintf(buffer, sizeof(buffer), "Read %luMB", shared_data_p->total_size / 1024 / 1024);
 	lcd_display_message(buffer, NULL, "Optimising MP3 files", "Please Wait");
 
 	if (optimize_and_generate_crcs() != 0) {
-		lcd_display_error_message("Failed to process", "new master");
-		shared_data_p->channel_info[master_device_id].state = FAILED;
-		shared_data_p->master_reload_requested = false;
-		return;
+		fprintf(stderr, "ERROR: Failed to optimise/checksum the master data\n");
+		return 1;
 	}
+
+	return 0;
+}
+
+
+// Reads the master from slot 0, repeating the read until a complete copy has been read,
+// optimised and checksummed. A failed read leaves the ramdrive incomplete, so nothing
+// else may happen until this succeeds. If the stick is pulled (or drops off the bus and
+// doesn't come back) between attempts, it waits for a master to be inserted again.
+//
+// slot0_fixed is false before the USB ports have been mapped. Slot 0 is then simply
+// whichever socket the first stick went into, so it's freed up again when empty -
+// otherwise a master re-inserted into a different socket would never be noticed.
+static void read_master_until_ok(const char* heading, bool slot0_fixed) {
+
+	ChannelInfoStruct* channel_info_p = &shared_data_p->channel_info[0];
+
+	for (int attempt = 1; ; attempt++) {
+
+		if (channel_info_p->device_name[0] == '\0') {
+			if (!slot0_fixed) {
+				channel_info_p->device_path[0] = '\0';
+				shared_data_p->channels_active = 0;
+			}
+
+			lcd_display_message(NULL, "Insert Master", "in slot 1", NULL);
+			set_state(0, INDICATING);
+
+			printf("Waiting for master USB to be inserted\n");
+			while (channel_info_p->device_name[0] == '\0') {
+				usleep(100000);
+			}
+		}
+
+		// Take a copy - the monitor thread clears the shared name if the stick drops out
+		char device_name[STRING_LEN];
+		snprintf(device_name, sizeof(device_name), "%s", channel_info_p->device_name);
+
+		printf("Reading master, attempt %d: name=%s path=%s\n", attempt, device_name, channel_info_p->device_path);
+		set_state(0, COPYING);
+
+		if (read_master_once(device_name, heading) == 0) {
+			return;
+		}
+
+		fprintf(stderr, "ERROR: Master read attempt %d failed - retrying\n", attempt);
+		set_state(0, FAILED);
+
+		snprintf(buffer, sizeof(buffer), "Attempt %d failed", attempt);
+		lcd_display_message("Master read failed", buffer, "Retrying...", "or try another stick");
+		error_beep();
+
+		// Also gives a stick that dropped off the bus a moment to come back
+		sleep(3);
+	}
+}
+
+
+// Prompts the user to insert the master USB in slot one, then reads it onto the ramdrive,
+// retrying until it has been read completely. slot0_fixed: see read_master_until_ok().
+void load_master(bool slot0_fixed) {
+
+	set_all_states(EMPTY);
+
+	read_master_until_ok("Reading Master", slot0_fixed);
+
+	// If this boot master happens to also be labelled "MASTER", the monitor thread will have
+	// raised master_reload_requested for it too - it's already been handled above, so clear
+	// the flag to stop the main loop redundantly reloading the exact same data again.
+	shared_data_p->master_reload_requested = false;
+}
+
+
+// Re-reads the master data from a newly-inserted "MASTER"-labelled USB drive in slot 0, at
+// any point after boot, without requiring the port-mapping dance in map_usb_port_numbers()
+// to be repeated. Called from the main loop whenever master_reload_requested is set.
+// The previous master has been wiped by the first attempt, so this retries until the new
+// one has been read in full - returning early used to leave a partial master behind.
+void reload_master(void) {
+
+	printf("Reloading master from %s\n", shared_data_p->master_device_name);
+
+	// The ports are mapped by now, so slot 0 is a fixed socket
+	read_master_until_ok("Reading New Master", true);
 
 	printf("Master reload complete\n");
 	beep();
 	lcd_display_message("New Master Loaded", NULL, "Insert blank USBs", "then push button");
 
-	// Slot stays INDICATING (special/reserved) while the master remains plugged in;
-	// usb.c reverts it to EMPTY automatically once the drive is physically removed.
+	// Keep the slot reserved (INDICATING) while the master remains plugged in, so run()
+	// never uses it as a duplication target; usb.c reverts it to EMPTY once it's removed.
+	// read_master_until_ok() changed it while reading, so it has to be put back here.
+	set_state(0, INDICATING);
+
+	// Throw away any button presses made while the master was being read, so a press
+	// during a long retry doesn't start a run the moment it finishes.
+	get_button_state0();
+	get_button_state1();
+
 	shared_data_p->master_reload_requested = false;
 }
 
@@ -1060,15 +1155,10 @@ int main() {
 	test_leds();
 	double_beep();
 	
-	load_master();
-
-	snprintf(buffer, sizeof(buffer), "Read %luMB", shared_data_p->total_size / 1024 / 1024);
-	lcd_display_message(buffer, NULL, "Optimising MP3 files", "Please Wait");
-
-	if (optimize_and_generate_crcs() != 0) {
-		fprintf(stderr, "ERROR: Failed to optimise/checksum master data\n");
-		exit(1);
-	}
+	// Repeats the read until the master has been read, optimised and checksummed in full.
+	// Its result used to be ignored, so a stick that dropped out part way through left a
+	// partial master that was then checksummed - and so verified - as if complete.
+	load_master(port_map_loaded);
 
 	lcd_display_message(NULL, "Please", "Remove Master USB", NULL);
 	set_state(0, READY);

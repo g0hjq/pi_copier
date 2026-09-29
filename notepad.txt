@@ -47,6 +47,12 @@ Button 1 : Purple	GPIO 20 Pin 38
 Button 2 : Purple	GPIO 21 Pin 40
 
 
+USB Diagnostics
+---------------
+dmesg -wT  to show a continuous USB device trace
+lsusb -t   to see which controller and hub tier each stick is on
+
+
 
 
 Raspberry Pi Configuration
@@ -71,6 +77,15 @@ Setting up a RAM drive on Raspberry Pi
 To check if your operation succeeded issue 'df' which should report 
 (among the other disks) a tmpfs with 1024 1K blocks (=1MB) as /var/master
 
+
+Fixing USB Hub Timing problem
+-----------------------------
+Disable autosuspend in /boot/firmware/cmdline.txt
+	usbcore.autosuspend=-1 
+	
+Make the kernel wait 2 seconds (the default is 1) before scanning a new stick
+(also in /boot/firmware/cmdline.txt)
+	usb-storage.delay_use=2
 
 
 To set fixed IP Address for wifi
